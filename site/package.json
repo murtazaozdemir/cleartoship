@@ -1,0 +1,13 @@
+{
+  "name": "cleartoship-site",
+  "private": true,
+  "version": "0.0.0",
+  "description": "cleartoship.app landing page — static assets served by a Cloudflare Worker",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^4.127.0"
+  }
+}
