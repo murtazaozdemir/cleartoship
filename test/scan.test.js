@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
+import { buildFixtures } from './fixture-setup.js';
 import { scan } from '../dist/index.js';
 import { splitStatements, normaliseTable, isAlwaysTrue, clauseAfter } from '../dist/utils/sql.js';
 import { editDistance, nearestPopular, POPULAR_NPM } from '../dist/data/popular.js';
@@ -13,6 +14,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const VULNERABLE = join(here, 'fixtures', 'vulnerable-app');
 const CLEAN = join(here, 'fixtures', 'clean-app');
 const CLI = join(here, '..', 'dist', 'cli.js');
+
+// Credential-shaped fixture state is generated, never committed.
+buildFixtures();
 
 const ids = (result) => new Set(result.findings.map((f) => f.id));
 
