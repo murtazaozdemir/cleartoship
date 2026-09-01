@@ -281,14 +281,27 @@ export const serverActionsScanner: Scanner = {
           isRoute && httpMethod === 'POST' && /webhook|\bhooks?\b|stripe|clerk|svix/i.test(relPath);
         const isCron = isRoute && /(^|\/)(cron|scheduled|jobs?)(\/|$)/i.test(relPath);
 
+        // Some endpoints are unauthenticated by design — the sign-in and
+        // account-recovery flow (you have no session yet), and public intake
+        // forms. Flagging "missing auth" there is a false positive, so it is
+        // reported at low rather than as a blocking critical.
+        const PUBLIC_BY_DESIGN_ROUTE =
+          /(^|\/|-)(login|signin|sign-in|register|signup|sign-up|forgot-password|reset-password|verify-email|resend-verification|magic-link|contact|lead|leads|waitlist|subscribe|unsubscribe|newsletter)(\/|-|\.|$)/i;
+        const intentionallyPublic = isRoute && PUBLIC_BY_DESIGN_ROUTE.test(relPath);
+
         if (writes && !info.hasAuth && info.getSessionLine === null) {
           push({
             id: 'CTS001',
-            severity: 'critical',
-            title: `Missing ${kind} authorization`,
+            severity: intentionallyPublic ? 'low' : 'critical',
+            title: intentionallyPublic
+              ? `${kind} is unauthenticated (appears public by design)`
+              : `Missing ${kind} authorization`,
             detail:
               `${kind} \`${name}\` performs a database mutation without verifying the caller. ` +
-              exposure,
+              exposure +
+              (intentionallyPublic
+                ? ' This route name suggests a sign-in / account-recovery or public-intake endpoint, which is unauthenticated by design — confirm it has rate limiting and does not trust caller-supplied identifiers.'
+                : ''),
             fix:
               'Resolve and check the session before touching the database, e.g.\n' +
               '  const { data: { user } } = await supabase.auth.getUser()\n' +

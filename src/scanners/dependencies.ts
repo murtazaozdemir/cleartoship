@@ -100,7 +100,11 @@ function collectFromPyproject(source: string, relPath: string): Declared[] {
 const NPM_NAME = String.raw`(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*`;
 
 const INSTALL_COMMAND = new RegExp(
-  String.raw`\b(?:npm\s+(?:i|install|add)|yarn\s+add|pnpm\s+(?:i|install|add)|bun\s+(?:i|install|add)|npx|pnpm\s+dlx|bunx)\s+([^\n\`|;&>]+)`,
+  String.raw`\b(?:npm\s+(?:i|install|add)|yarn\s+add|pnpm\s+(?:i|install|add)|bun\s+(?:i|install|add))\s+([^\n\`|;&>]+)`,
+  'gi',
+);
+const RUNNER_COMMAND = new RegExp(
+  String.raw`\b(?:npx|pnpm\s+dlx|bunx)\s+([^\n\`|;&>]+)`,
   'gi',
 );
 const PIP_COMMAND =
@@ -128,13 +132,19 @@ function collectFromProse(source: string, relPath: string): Declared[] {
         if (!bare || bare.includes('/') && !bare.startsWith('@')) continue; // path or URL
         if (/^[.~/]|:/.test(bare)) continue;
         const ok = ecosystem === 'npm' ? npmName.test(bare) : /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(bare);
-        if (!ok) continue;
+        // A real package name contains letters; reject list bullets, ports and
+        // version-ish tokens ("3003", "1.", "2") that show up in prose.
+        if (!ok || !/[a-z]/i.test(bare) || bare.length < 2) continue;
         out.push({ name: bare, range: '', ecosystem, file: relPath, line, dev: false, fromProse: true });
         if (firstArgOnly) break;
       }
     }
   };
 
+  // For `npx pkg <args>` / `pnpm dlx` / `bunx`, only the first token is a
+  // package — the rest are that command's arguments (so `wrangler d1 create
+  // my-db` must not read `d1`, `create`, `my-db` as packages).
+  harvest(RUNNER_COMMAND, 'npm', true);
   harvest(INSTALL_COMMAND, 'npm', false);
   harvest(PIP_COMMAND, 'pypi', false);
   return out;

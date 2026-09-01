@@ -104,7 +104,7 @@ const NON_PRODUCTION_PATH =
 
 /** Env var names that are meant to be public even though they read like secrets. */
 const PUBLIC_BY_DESIGN =
-  /(ANON_KEY|PUBLISHABLE_KEY|PUBLIC_KEY|CLIENT_ID|MEASUREMENT_ID|PROJECT_ID|APP_ID|SENDER_ID|FIREBASE_API_KEY|MAPBOX_TOKEN|POSTHOG_KEY|SENTRY_DSN)$/;
+  /(ANON_KEY|PUBLISHABLE_KEY|PUBLIC_KEY|CLIENT_ID|MEASUREMENT_ID|PROJECT_ID|APP_ID|SENDER_ID|FIREBASE_API_KEY|MAPBOX_TOKEN|POSTHOG_KEY|SENTRY_DSN|SHOPIFY_API_KEY)$/;
 const SECRETY_NAME = /(SECRET|SERVICE_ROLE|PRIVATE|PASSWORD|PASSWD|_TOKEN|API_KEY|ACCESS_KEY|CREDENTIAL)/;
 
 const LOCKFILES = new Set([
@@ -182,6 +182,7 @@ export const secretsScanner: Scanner = {
           if (PLACEHOLDER.test(value) || REPEATED_RUN.test(value)) continue;
           if (pattern.id === 'supabase-anon') continue; // informational only, not reported
           const line = lineAt(source, m.index);
+          if (isCommentedOut(source, m.index)) continue; // documented example, not a live secret
           if (suppress.suppressed(line, 'CTS030')) continue;
 
           const key = `${relPath}:${line}:${pattern.id}`;

@@ -4,6 +4,7 @@ import { join, relative, sep } from 'node:path';
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '.next', '.turbo', '.vercel', '.wrangler',
   'dist', 'build', 'out', 'coverage', '.venv', 'venv', '__pycache__',
+  '.open-next', '.sst', '.vercel',
   '.cache', '.pnpm-store', 'vendor', 'target', '.svelte-kit', '.nuxt',
   '.cts-cache', '_reference', 'site',
 ]);

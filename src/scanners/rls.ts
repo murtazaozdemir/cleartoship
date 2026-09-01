@@ -75,7 +75,22 @@ export const rlsScanner: Scanner = {
   name: 'Supabase / PostgreSQL Row Level Security',
 
   applies(ctx) {
-    return ctx.files.some(isSql);
+    if (!ctx.files.some(isSql)) return false;
+    // Row Level Security is a PostgreSQL feature that Supabase builds on. This
+    // scanner must not fire on SQLite / Cloudflare D1 / Prisma-sqlite schemas,
+    // which have no RLS concept at all — doing so turns every CREATE TABLE into
+    // a false "RLS disabled" critical. Require a genuine Postgres/Supabase
+    // signal: the dependency set, a supabase/ directory, or RLS/auth idioms in
+    // the SQL itself.
+    if (ctx.framework.supabase) return true;
+    for (const file of ctx.files) {
+      if (!isSql(file)) continue;
+      const src = read(file);
+      if (src && /\brow\s+level\s+security\b|\bauth\.(uid|jwt|role)\s*\(|\bto\s+(anon|authenticated)\b|\bcreate\s+policy\b/i.test(src)) {
+        return true;
+      }
+    }
+    return false;
   },
 
   async run(ctx): Promise<ScanResult> {
