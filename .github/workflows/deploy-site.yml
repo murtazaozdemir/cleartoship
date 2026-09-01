@@ -1,0 +1,38 @@
+name: Deploy site
+
+# Ongoing deploys of the cleartoship.app landing page. This does NOT perform the
+# one-time custom-domain binding — that placeholder DNS record must be cleared
+# once by hand in the Cloudflare dashboard (error 100117). Once the domain is
+# bound, every push that touches site/ redeploys the Worker automatically.
+on:
+  push:
+    branches: [main]
+    paths: ['site/**']
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: site
+          command: deploy
+      - name: Confirm the live version changed
+        # A green push is not a deploy — surface the deployed version so a
+        # silent failure (billing, token scope) is visible in the run, not
+        # discovered days later. Mirrors the aistoreaudit lesson.
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        working-directory: site
+        run: npx wrangler deployments list --name cleartoship | head -20
