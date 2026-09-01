@@ -551,16 +551,30 @@ export const dependencyScanner: Scanner = {
         const cve = worst.aliases.find((a) => a.startsWith('CVE-')) ?? worst.id;
         const others = vulns.length - 1;
 
+        // A devDependency's vulnerability lives in your build/CI toolchain, not
+        // in what your users run — a real concern, but not the same class as a
+        // CVE in a package that ships. Label it and hold its severity below the
+        // gate so a linter CVE never blocks a deploy the way a runtime one does.
+        const shipsToProd = !d.dev;
+        const severity: typeof result.findings[number]['severity'] = shipsToProd
+          ? severityFromCvss(worst.cvss)
+          : 'low';
+
         result.findings.push({
           id: 'CTS024',
-          severity: severityFromCvss(worst.cvss),
-          title: `Dependency has a known vulnerability (${cve})`,
+          severity,
+          title: shipsToProd
+            ? `Dependency has a known vulnerability (${cve})`
+            : `Dev dependency has a known vulnerability (${cve})`,
           detail:
             `\`${d.name}@${q.version}\` is affected by ${cve}: ${worst.summary}` +
             (worst.cvss !== null ? ` CVSS ${worst.cvss}.` : '') +
             (others > 0
               ? ` ${others} further advisor${others === 1 ? 'y' : 'ies'} also affect this version.`
-              : ''),
+              : '') +
+            (shipsToProd
+              ? ''
+              : ' It is a dev/build dependency, so it does not ship to production — fix it, but it does not gate a deploy.'),
           fix: worst.fixedIn
             ? `Upgrade \`${d.name}\` to ${worst.fixedIn} or later.`
             : `No fixed version is published yet. Check https://osv.dev/vulnerability/${worst.id} for mitigations.`,
@@ -571,6 +585,7 @@ export const dependencyScanner: Scanner = {
           meta: {
             package: d.name,
             version: q.version,
+            production: shipsToProd,
             resolvedFrom: versions.has(d.name) ? 'lockfile-or-range' : 'range',
             advisories: vulns.map((v) => ({
               id: v.id,
@@ -583,11 +598,17 @@ export const dependencyScanner: Scanner = {
       });
 
       if (osvChecked > 0) {
-        const vulnerable = result.findings.filter((f) => f.id === 'CTS024').length;
+        const cts024 = result.findings.filter((f) => f.id === 'CTS024');
+        const shipping = cts024.filter((f) => f.meta?.production === true).length;
+        const devOnly = cts024.length - shipping;
         result.checks.push({
           label: `Known vulnerabilities (${osvChecked} resolved versions checked against OSV.dev)`,
-          passed: vulnerable === 0,
-          note: vulnerable > 0 ? `${vulnerable} affected` : undefined,
+          // Only shipping vulnerabilities fail the check; dev/build ones are noted.
+          passed: shipping === 0,
+          note:
+            cts024.length === 0
+              ? undefined
+              : `${shipping} shipping` + (devOnly > 0 ? `, ${devOnly} dev/build (non-blocking)` : ''),
         });
       }
     }

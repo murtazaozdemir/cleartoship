@@ -441,3 +441,36 @@ test('the shipped GitHub Action is structurally sound', () => {
     assert.match(yml, new RegExp(`${out}=`), `output ${out} must be written`);
   }
 });
+
+test('CVEs distinguish shipping deps from dev/build deps', { skip: !online && 'offline' }, async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const dir = mkdtempSync(join(tmpdir(), 'cts-devprod-'));
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({
+      name: 'x',
+      dependencies: { next: '14.2.3' },     // ships — known CVE cluster
+      devDependencies: { postcss: '8.4.30' }, // build-only — known CVE
+    }),
+  );
+  const { scan: run } = await import('../dist/index.js');
+  const r = await run({ root: dir });
+  const cves = r.findings.filter((f) => f.id === 'CTS024');
+
+  const prod = cves.find((f) => f.meta.package === 'next');
+  const dev = cves.find((f) => f.meta.package === 'postcss');
+  assert.ok(prod && dev, 'both packages should have advisories');
+
+  assert.equal(prod.meta.production, true);
+  assert.notEqual(prod.severity, 'low', 'a shipping CVE keeps its CVSS severity');
+
+  assert.equal(dev.meta.production, false);
+  assert.equal(dev.severity, 'low', 'a dev/build CVE is held below the gate');
+  assert.match(dev.title, /Dev dependency/);
+
+  // The known-vulnerabilities check fails on shipping deps, not dev ones.
+  const check = r.checks.find((c) => c.label.startsWith('Known vulnerabilities'));
+  assert.equal(check.passed, false);
+  assert.match(check.note, /1 shipping/);
+});

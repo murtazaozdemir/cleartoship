@@ -58,7 +58,7 @@ npx cleartoship
 | **CTS021** | high | Dependency registered days ago with near-zero downloads (slopsquat shape) |
 | **CTS022** | low | Runtime dependency with almost no users |
 | **CTS023** | high/medium | Name is one edit from a popular package (`expres` → `express`) |
-| **CTS024** | by CVSS | Dependency version has a **published advisory**, resolved live from [OSV.dev](https://osv.dev) |
+| **CTS024** | by CVSS | Dependency version has a **published advisory**, resolved live from [OSV.dev](https://osv.dev). Vulns in `devDependencies` are labeled and held below the gate — a linter CVE never blocks a deploy the way a shipping one does. |
 | **CTS025** | low | Dependency deprecated upstream |
 | **CTS026** | critical | Registry serves HTTP 451 — the package was pulled for malware |
 | **CTS027** | critical | Package was unpublished but still has installs; the name is open to takeover |
