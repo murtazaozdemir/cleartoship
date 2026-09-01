@@ -37,6 +37,24 @@ jobs:
       # The fixtures under test/ are intentionally vulnerable, so scan src only.
       - run: node dist/cli.js src --fail-on=critical
 
+      - name: Check the npm token before building anything
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # npm answers an unauthorized publish with a 404 that reads like "the
+          # package does not exist", which sends you hunting in entirely the wrong
+          # place. Ask who we are first, so the failure names the real cause.
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::The NPM_TOKEN secret is empty or not set on this repo."
+            exit 1
+          fi
+          if ! who=$(npm whoami 2>&1); then
+            echo "::error::NPM_TOKEN is not a valid npm token. npm whoami said: ${who}"
+            echo "::error::Generate a Classic -> Automation token at npmjs.com and re-set the secret."
+            exit 1
+          fi
+          echo "npm authenticated as: ${who}"
+
       - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
