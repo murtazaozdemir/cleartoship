@@ -436,10 +436,38 @@ test('the shipped GitHub Action is structurally sound', () => {
   const opens = (yml.match(/\$\{\{/g) || []).length;
   const closes = (yml.match(/\}\}/g) || []).length;
   assert.equal(opens, closes, 'unbalanced ${{ }} expressions');
-  // Every declared output must be produced by the scan step.
-  for (const out of ['verdict', 'critical', 'high', 'total']) {
-    assert.match(yml, new RegExp(`${out}=`), `output ${out} must be written`);
+  // Every declared output must be produced by the scan step. The list is read
+  // out of the outputs: block rather than hard-coded, so a newly declared
+  // output cannot ship without something actually writing it.
+  const outputsBlock = yml.slice(yml.indexOf('\noutputs:'), yml.indexOf('\nruns:'));
+  const declared = [...outputsBlock.matchAll(/^  ([a-z][a-z-]*):$/gm)].map((m) => m[1]);
+  assert.ok(declared.length >= 5, 'the action should declare its outputs');
+  for (const out of declared) {
+    assert.match(yml, new RegExp(`\\b${out}=`), `output ${out} must be written`);
   }
+
+  // Shell-quoting guard. The inline script is fed to node over a quoted
+  // heredoc, never `node -e '...'`, where a single apostrophe in a comment
+  // truncates the script and every output silently comes back empty.
+  assert.ok(!/node -e '/.test(yml), "inline node must not be passed via node -e '...'");
+  assert.match(yml, /node <<'NODE'/, 'inline node should be fed over a quoted heredoc');
+  // After YAML strips the block indentation the terminator must land in column
+  // 0, or the heredoc never closes.
+  const runIndent = /^(\s*)node <<'NODE'/m.exec(yml)[1];
+  assert.match(
+    yml,
+    new RegExp(`^${runIndent}NODE$`, 'm'),
+    'heredoc terminator must sit at the run body indentation',
+  );
+
+  // The gate must be counted off every finding's severity. Rebuilding it from
+  // the critical/high outputs alone is the bug that made fail-on=medium and
+  // fail-on=low silently behave like fail-on=high.
+  assert.match(
+    yml,
+    /rank\[f\.severity\] >= rank\[gate\]/,
+    'the severity gate must count findings at every severity',
+  );
 });
 
 test('CVEs distinguish shipping deps from dev/build deps', { skip: !online && 'offline' }, async () => {

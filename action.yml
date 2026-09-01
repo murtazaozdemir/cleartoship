@@ -27,9 +27,12 @@ inputs:
     required: false
     default: 'false'
   version:
-    description: Version of the cleartoship npm package to run.
+    description: >-
+      Version of the cleartoship npm package to run. Defaults to the version this
+      action's own ref declares, so `uses: …@v0.8.0` runs cleartoship@0.8.0. Set
+      `latest` to always track the newest release, or `local` to build from the checkout.
     required: false
-    default: latest
+    default: ''
   working-directory:
     description: Directory to run the scan from.
     required: false
@@ -49,9 +52,18 @@ outputs:
   high:
     description: Number of high findings.
     value: ${{ steps.scan.outputs.high }}
+  medium:
+    description: Number of medium findings.
+    value: ${{ steps.scan.outputs.medium }}
+  low:
+    description: Number of low findings.
+    value: ${{ steps.scan.outputs.low }}
   total:
     description: Total number of findings.
     value: ${{ steps.scan.outputs.total }}
+  blocking:
+    description: Number of findings at or above the fail-on severity.
+    value: ${{ steps.scan.outputs.blocking }}
 
 runs:
   using: composite
@@ -59,17 +71,28 @@ runs:
     - name: Resolve ClearToShip
       id: resolve
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
-        # Prefer the published npm package. If it cannot be resolved — which is
-        # the case before the first publish, or when a pinned version is not on
-        # the registry — fall back to building from this action's own checkout,
-        # so `uses: <owner>/cleartoship@ref` works with no npm dependency.
-        ver="${{ inputs.version }}"
+        # With no version pinned, run the exact version this action's checkout
+        # declares. That keeps the action ref and the scanner in lockstep:
+        # `uses: <owner>/cleartoship@v0.8.0` runs cleartoship@0.8.0 instead of
+        # whatever npm happens to tag `latest` at the time.
+        ver="$INPUT_VERSION"
+        if [ -z "$ver" ]; then
+          ver=$(node -p "require('${GITHUB_ACTION_PATH}/package.json').version")
+          echo "No version pinned; matching this action's checkout: ${ver}"
+        fi
+
+        # Prefer the published npm package. If it cannot be resolved — an
+        # unpublished version, or a pinned version that is not on the registry —
+        # fall back to building from this action's own checkout, so
+        # `uses: <owner>/cleartoship@ref` works with no npm dependency.
         if [ "$ver" != "local" ] && npm view "cleartoship@${ver}" version >/dev/null 2>&1; then
           echo "cmd=npx --yes cleartoship@${ver}" >> "$GITHUB_OUTPUT"
           echo "Using published cleartoship@${ver}"
         else
-          echo "Published package not found; building from the action checkout."
+          echo "cleartoship@${ver} not on the registry; building from the action checkout."
           ( cd "$GITHUB_ACTION_PATH" && npm ci --silent && npm run build --silent )
           echo "cmd=node ${GITHUB_ACTION_PATH}/dist/cli.js" >> "$GITHUB_OUTPUT"
         fi
@@ -78,30 +101,56 @@ runs:
       id: scan
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        # Inputs are read through the environment rather than interpolated into
+        # the script body, so a caller's value is never parsed as shell.
+        CTS: ${{ steps.resolve.outputs.cmd }}
+        INPUT_PATHS: ${{ inputs.paths }}
+        INPUT_OFFLINE: ${{ inputs.offline }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
       run: |
         set -o pipefail
-        CTS="${{ steps.resolve.outputs.cmd }}"
         args=()
-        [ -n "${{ inputs.paths }}" ] && args+=(${{ inputs.paths }})
-        [ "${{ inputs.offline }}" = "true" ] && args+=(--offline)
+        if [ -n "$INPUT_PATHS" ]; then read -ra args <<< "$INPUT_PATHS"; fi
+        if [ "$INPUT_OFFLINE" = "true" ]; then args+=(--offline); fi
 
         # The gate is applied at the end so the report and comment are produced
         # regardless of pass/fail; --fail-on=none keeps this step from aborting early.
         $CTS "${args[@]}" --json --fail-on=none > cleartoship.json
         $CTS "${args[@]}" --markdown --fail-on=none > cleartoship.md || true
-        if [ "${{ inputs.sarif }}" = "true" ]; then
+        if [ "$INPUT_SARIF" = "true" ]; then
           $CTS "${args[@]}" --sarif --fail-on=none > results.sarif || true
         fi
 
-        node -e '
-          const r = require("./cleartoship.json");
-          const out = process.env.GITHUB_OUTPUT;
-          const fs = require("fs");
-          fs.appendFileSync(out, `verdict=${r.verdict}\n`);
-          fs.appendFileSync(out, `critical=${r.counts.critical}\n`);
-          fs.appendFileSync(out, `high=${r.counts.high}\n`);
-          fs.appendFileSync(out, `total=${r.findings.length}\n`);
-        '
+        # Counting blocking findings here — off the full report, which carries every
+        # severity — is what makes `fail-on: medium` and `fail-on: low` mean what they
+        # say. A gate rebuilt from the critical/high outputs alone silently cannot.
+        # Fed to node over stdin with a quoted heredoc: nothing here is parsed by
+        # bash, so an apostrophe in a comment cannot silently truncate the script.
+        node <<'NODE'
+        const fs = require("fs");
+        const r = JSON.parse(fs.readFileSync("cleartoship.json", "utf8"));
+        const rank = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
+        const gate = process.env.INPUT_FAIL_ON;
+        if (gate !== "none" && !(gate in rank)) {
+          console.error(`::error::Unknown fail-on value "${gate}". Use critical, high, medium, low or none.`);
+          process.exit(2);
+        }
+        const blocking = gate === "none"
+          ? 0
+          : r.findings.filter((f) => rank[f.severity] >= rank[gate]).length;
+        // Written out one by one rather than in a loop, so every declared output
+        // stays greppable and the action test can prove each one is produced.
+        const out = process.env.GITHUB_OUTPUT;
+        fs.appendFileSync(out, `verdict=${r.verdict}\n`);
+        fs.appendFileSync(out, `critical=${r.counts.critical}\n`);
+        fs.appendFileSync(out, `high=${r.counts.high}\n`);
+        fs.appendFileSync(out, `medium=${r.counts.medium}\n`);
+        fs.appendFileSync(out, `low=${r.counts.low}\n`);
+        fs.appendFileSync(out, `total=${r.findings.length}\n`);
+        fs.appendFileSync(out, `blocking=${blocking}\n`);
+        NODE
 
         # Job summary — always shown on the run.
         cat cleartoship.md >> "$GITHUB_STEP_SUMMARY"
@@ -113,6 +162,7 @@ runs:
       env:
         GH_TOKEN: ${{ inputs.github-token }}
         PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
       run: |
         # A sticky comment: find a previous ClearToShip comment and edit it, so
         # re-runs update in place instead of piling up.
@@ -120,12 +170,12 @@ runs:
         printf '%s\n\n' "$marker" > body.md
         cat cleartoship.md >> body.md
 
-        id=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" \
+        id=$(gh api "repos/${REPO}/issues/${PR}/comments" \
               --jq "map(select(.body | contains(\"$marker\"))) | .[0].id // empty" 2>/dev/null || true)
         if [ -n "$id" ]; then
-          gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${id}" -F body=@body.md >/dev/null
+          gh api -X PATCH "repos/${REPO}/issues/comments/${id}" -F body=@body.md >/dev/null
         else
-          gh api -X POST "repos/${{ github.repository }}/issues/${PR}/comments" -F body=@body.md >/dev/null
+          gh api -X POST "repos/${REPO}/issues/${PR}/comments" -F body=@body.md >/dev/null
         fi
 
     - name: Upload SARIF
@@ -136,19 +186,12 @@ runs:
 
     - name: Apply severity gate
       shell: bash
+      env:
+        GATE: ${{ inputs.fail-on }}
+        BLOCKING: ${{ steps.scan.outputs.blocking }}
       run: |
-        gate="${{ inputs.fail-on }}"
-        [ "$gate" = "none" ] && exit 0
-        declare -A rank=( [critical]=4 [high]=3 [medium]=2 [low]=1 )
-        floor=${rank[$gate]:-4}
-        crit=${{ steps.scan.outputs.critical }}
-        high=${{ steps.scan.outputs.high }}
-        # Only critical and high are wired as outputs; medium/low never block by default.
-        blocking=0
-        [ "$floor" -le 4 ] && blocking=$((blocking + crit))
-        [ "$floor" -le 3 ] && blocking=$((blocking + high))
-        if [ "$blocking" -gt 0 ]; then
-          echo "::error::ClearToShip found $blocking finding(s) at or above '$gate'."
+        if [ "$BLOCKING" -gt 0 ]; then
+          echo "::error::ClearToShip found ${BLOCKING} finding(s) at or above '${GATE}'."
           exit 1
         fi
-        echo "ClearToShip: clear to ship at '$gate'."
+        echo "ClearToShip: clear to ship at '${GATE}'."

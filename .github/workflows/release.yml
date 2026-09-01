@@ -1,0 +1,71 @@
+name: Release
+
+# Tagging is the release. Publishing by hand is what let package.json reach
+# 0.8.0 while npm still served 0.7.0 — and because the action resolves the npm
+# package, that drift silently changed what every consumer actually ran.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write   # for the GitHub Release
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Tag must match package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(node -p "require('./package.json').version")
+          test "$tag" = "$pkg" || {
+            echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${pkg}"
+            exit 1
+          }
+          echo "releasing ${pkg}"
+
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      # The fixtures under test/ are intentionally vulnerable, so scan src only.
+      - run: node dist/cli.js src --fail-on=critical
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          if npm view "cleartoship@${ver}" version >/dev/null 2>&1; then
+            echo "cleartoship@${ver} is already published; nothing to do."
+            exit 0
+          fi
+          # --provenance needs a public repo; add it when this repo goes public.
+          npm publish --access public
+
+      - name: Verify the registry actually serves it
+        run: |
+          # A green publish step is not a published package. Poll until the
+          # registry serves the new version rather than trusting the exit code.
+          ver=$(node -p "require('./package.json').version")
+          for i in $(seq 1 10); do
+            if [ "$(npm view "cleartoship@${ver}" version 2>/dev/null)" = "$ver" ]; then
+              echo "registry serves cleartoship@${ver}"
+              exit 0
+            fi
+            echo "attempt ${i}: not visible yet, waiting..."
+            sleep 6
+          done
+          echo "::error::cleartoship@${ver} never appeared on the registry"
+          exit 1
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --title "${GITHUB_REF_NAME}"

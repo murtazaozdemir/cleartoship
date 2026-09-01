@@ -183,7 +183,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: murtazaozdemir/cleartoship@v0.7.0
+      - uses: murtazaozdemir/cleartoship@v0.8.0
         with:
           fail-on: critical
           comment: true
@@ -197,11 +197,17 @@ jobs:
 | `sarif` | `false` | Upload results to GitHub code scanning |
 | `offline` | `false` | Skip registry and OSV lookups |
 | `working-directory` | `.` | Directory to scan from |
+| `version` | *(matches the action ref)* | npm version of the scanner to run; `latest` to always track the newest, `local` to build from the checkout |
 
-Outputs `verdict` (`clear`/`conditional`/`hold`), `critical`, `high` and `total`
-for use in later steps. The comment is *sticky* — re-runs edit the same comment
-instead of piling up. Until the npm package is published, the action builds
-itself from its own checkout, so `uses: …@ref` works immediately.
+Outputs `verdict` (`clear`/`conditional`/`hold`), the per-severity counts
+`critical`, `high`, `medium`, `low`, plus `total` and `blocking` (findings at or
+above `fail-on`) for use in later steps. The comment is *sticky* — re-runs edit
+the same comment instead of piling up.
+
+By default the action runs the scanner version its own ref declares, so
+`@v0.8.0` runs `cleartoship@0.8.0` and pinning the ref pins the behaviour. If
+that version is not on the registry, it builds from its own checkout instead, so
+`uses: …@ref` works against an unpublished commit.
 
 ### Plain CLI
 
@@ -217,7 +223,7 @@ To feed findings into GitHub's Security tab without the Action:
         with: { sarif_file: results.sarif }
 ```
 
-## How it works## How it works
+## How it works
 
 Four scanners, all static — nothing is uploaded and no database is contacted.
 

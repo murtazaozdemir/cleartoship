@@ -1,0 +1,23 @@
+# A tool that flags other people's vulnerable dependencies should not sit on
+# its own. Grouped so routine bumps arrive as one PR, not five.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      dev-dependencies:
+        dependency-type: development
+      production-dependencies:
+        dependency-type: production
+
+  - package-ecosystem: npm
+    directory: /site
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
