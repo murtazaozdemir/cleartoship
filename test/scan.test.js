@@ -302,3 +302,75 @@ test('suppression directives work from the top of a comment block', () => {
   assert.equal(sup.suppressed(4, 'VG999'), false, 'other rules are unaffected');
   assert.equal(sup.suppressed(1, 'VG010'), false, 'code above the block is unaffected');
 });
+
+test('vendored gitleaks rules cover providers the built-in patterns do not', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+  const gl = result.findings.filter((f) => f.id.startsWith('GL-'));
+  assert.ok(gl.length > 0, 'the gitleaks ruleset should contribute findings');
+
+  for (const f of gl) {
+    assert.equal(f.meta.source, 'gitleaks');
+    assert.match(f.meta.attribution, /MIT/);
+    assert.ok(typeof f.meta.entropy === 'number');
+    assert.ok(f.snippet.includes('…'), `snippet must be redacted: ${f.snippet}`);
+  }
+
+  const rules = new Set(gl.map((f) => f.id));
+  assert.ok(rules.has('GL-npm-access-token'), 'npm token should be detected');
+});
+
+test('noisy gitleaks rules are withheld', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+  const ids = new Set(result.findings.map((f) => f.id));
+  assert.ok(!ids.has('GL-generic-api-key'), "gitleaks' catch-all is too noisy to ship");
+  assert.ok(!ids.has('GL-sourcegraph-access-token'), 'it matches any 40-char hex, i.e. every SHA');
+});
+
+test('a built-in pattern is not double-reported by a gitleaks rule', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+  const byLocation = new Map();
+  for (const f of result.findings.filter((f) => f.id === 'CTS030' || f.id.startsWith('GL-'))) {
+    const key = `${f.file}:${f.line}`;
+    byLocation.set(key, (byLocation.get(key) ?? 0) + 1);
+  }
+  for (const [where, count] of byLocation) {
+    assert.equal(count, 1, `${where} reported ${count} times by overlapping credential rules`);
+  }
+});
+
+test('entropy scoring separates real keys from filler', async () => {
+  const { shannonEntropy } = await import('../dist/utils/entropy.js');
+  assert.ok(shannonEntropy('npm_7Kq2Xw9ZbR4tYn6Vm1Pj8Ld3Hs5Gf0Ec7Ua2') > 4);
+  assert.ok(shannonEntropy('aaaaaaaaaaaaaaaaaaaaaaaa') < 1);
+  assert.ok(shannonEntropy('your_api_key_here') < 4);
+  assert.equal(shannonEntropy(''), 0);
+});
+
+test('lockfile-free projects still resolve a version for OSV', async () => {
+  // The vulnerable fixture has no lockfile, so `next: "14.2.3"` must resolve
+  // from the manifest range floor for the CVE check to run at all.
+  const result = await scan({ root: VULNERABLE, offline: true });
+  assert.ok(
+    !result.checks.some((c) => c.label.startsWith('Known vulnerabilities')),
+    'OSV must not run offline',
+  );
+});
+
+test('OSV reports real advisories for a known-vulnerable version', { skip: !online && 'offline' }, async () => {
+  const result = await scan({ root: VULNERABLE });
+  const cves = result.findings.filter((f) => f.id === 'CTS024');
+  assert.ok(cves.length > 0, 'next@14.2.3 has published advisories');
+
+  const next = cves.find((f) => f.meta.package === 'next');
+  assert.ok(next, 'the vulnerable next version should be flagged');
+  assert.equal(next.meta.version, '14.2.3');
+  assert.ok(next.meta.advisories.length > 1);
+  assert.match(next.title, /CVE-|GHSA-/);
+
+  // With live data available, the hand-written CVE regexes must stand down.
+  const { GUARDVIBE_CVE_RULE_IDS } = await import('../dist/vendor/guardvibe/index.js');
+  assert.ok(
+    !result.findings.some((f) => GUARDVIBE_CVE_RULE_IDS.has(f.id)),
+    'vendored CVE-version rules should defer to OSV when it answered',
+  );
+});

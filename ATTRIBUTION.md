@@ -33,6 +33,48 @@ Modifications, as required by Apache-2.0 §4(b), are made at runtime in
 Every vendored finding carries `meta.source: "guardvibe"` and its attribution
 string, so provenance survives into JSON and SARIF output.
 
+### gitleaks — `src/vendor/gitleaks/rules.ts`
+
+- Source: https://github.com/gitleaks/gitleaks (`config/gitleaks.toml`)
+- Copyright (c) 2019 Zachary Rice
+- Licence: MIT — full text in `LICENSES/gitleaks-MIT.txt`
+
+221 of 222 credential detection rules are converted from the upstream TOML into
+a generated TypeScript module by `scripts/vendor-gitleaks.mjs`. Rule ids,
+descriptions, entropy thresholds and keyword prefilters are carried over
+unchanged.
+
+Modifications:
+
+- **Regex dialect.** Upstream patterns are Go RE2. A leading `(?i)` becomes the
+  JavaScript `i` flag and `(?P<n>)` becomes `(?<n>)`. 37 rules use *scoped*
+  inline flags — `(?i:…)`, `(?-i:…)` — which JavaScript has no equivalent for;
+  rather than drop them, the flag is hoisted to the whole pattern. The cost is
+  precision, not safety: a prefix upstream matched case-sensitively now matches
+  either way, and every match still has to clear the entropy threshold. One rule
+  could not be converted and is omitted.
+- **2 rules are withheld** as noisy, each with its reason in
+  `src/scanners/secrets.ts`: `generic-api-key` (gitleaks' own catch-all — 97 of 118 hits across the
+  reference corpus were false, including ordinary arrays of method names) and
+  `sourcegraph-access-token` (matches any 40-character hex string, so every
+  SHA-pinned GitHub Action reads as a leaked token).
+- Per-rule allowlists are not carried over; ClearToShip applies its own
+  placeholder, entropy, hex-digest and fixture-path filters instead.
+
+Findings carry `meta.source: "gitleaks"` and the attribution string.
+
+## Services queried
+
+### OSV.dev
+
+Known-vulnerability data comes from https://osv.dev via its public HTTP API —
+the same database behind Google's `osv-scanner` (Apache-2.0). Nothing is
+vendored and no licence attaches; ClearToShip queries the API at scan time.
+
+This is why the vendored CVE-version rules stand down whenever OSV answers: a
+rule that hard-codes "next before 14.1.1" is stale the week after it is written,
+while OSV is current. Offline (`--offline`), the vendored rules are the fallback.
+
 ## Ideas adopted, code not copied
 
 These informed the rule set. No code, regex or rule text was taken.
@@ -42,14 +84,30 @@ These informed the rule set. No code, regex or rule text was taken.
 | [supabase/splinter](https://github.com/supabase/splinter) | none stated | The vulnerability classes behind CTS010–019 and CTS050–052. Splinter queries a live database; ClearToShip reimplements these statically against migration files. |
 | [slopcheck](https://github.com/mattschaller/slopcheck) | MIT | Distinguishing HTTP 451 (pulled for malware) from 404 (never existed) from unpublished-with-installs (open to takeover) — CTS026/CTS027 — and reading install commands out of prose and agent instruction files. |
 
-## Deliberately not used
+## Licence status of every candidate considered
 
-| Project | Licence | Why |
+Verified against the GitHub API and the repositories' own LICENSE files, because
+second-hand licence claims about these projects are frequently wrong.
+
+| Project | Actual licence | Usable in a commercial SaaS? |
 | --- | --- | --- |
-| [trufflehog](https://github.com/trufflesecurity/trufflehog) | AGPL-3.0 | 800+ verified credential detectors, and the most tempting corpus here. AGPL's network-use clause reaches a hosted service, so adopting any substantial part of it would put that obligation on ClearToShip. This is a licensing decision, not a technical one — it can be revisited by choosing to release under AGPL. |
-| [RouteWarden](https://github.com/elicosilva/RouteWarden) | AGPL-3.0 | Same. |
-| [semgrep-rules](https://github.com/semgrep/semgrep-rules) | Semgrep Rules License v1.0 | A bespoke licence whose terms need reading before any rule is reused; the repository's LICENSE file is a single line pointing at semgrep.dev/legal/rules-license. |
-| [supabase-exposure-check](https://github.com/bscript/supabase-exposure-check) | none stated | No licence file means no licence granted. |
+| gitleaks | MIT | **Yes** — vendored above |
+| google/osv-scanner | Apache-2.0 | Yes (we use the OSV API rather than the binary) |
+| aquasecurity/trivy | Apache-2.0 | Yes |
+| dependency-check/DependencyCheck | Apache-2.0 | Yes |
+| projectdiscovery/nuclei + templates | MIT | Yes (DAST — needs a running app, out of scope here) |
+| zaproxy/zaproxy | Apache-2.0 | Yes (DAST) |
+| OWASP/Nettacker | Apache-2.0 | Yes (recon) |
+| goklab/guardvibe | Apache-2.0 | **Yes** — vendored above |
+| octokit, probot, babel, zod, shadcn/ui | MIT / ISC | Yes |
+| semgrep/semgrep | **LGPL-2.1**, not Apache | Only as a subprocess. LGPL is copyleft; invoking the CLI is fine, linking it into the product is not. Its *rules* are separately under the Semgrep Rules License. |
+| trufflesecurity/trufflehog | **AGPL-3.0** | No, unless ClearToShip itself ships under AGPL. gitleaks is the permissive equivalent and is what we used. |
+| elicosilva/RouteWarden | AGPL-3.0 | Same. |
+| wapiti | GPL-2.0 | Subprocess only. |
+| sqlmap, nikto | GPL-2.0 | Subprocess only. |
+| **Bearer/bearer** | **Elastic License 2.0** | **No.** ELv2 specifically prohibits providing the software to third parties as a hosted or managed service — which is precisely what a ClearToShip SaaS would be. It is not an open-source licence. |
+| supabase/splinter | **none** | No licence file means no licence granted. Ideas only. |
+| bscript/supabase-exposure-check | none | Same. |
 
 Taking a part rather than the whole does not change any of this: copyright and
 the AGPL both apply to substantial portions, not only to entire programs. What

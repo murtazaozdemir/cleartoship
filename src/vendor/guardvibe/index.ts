@@ -66,5 +66,15 @@ export const GUARDVIBE_RULES: SecurityRule[] = [
   ...webSecurityRules,
 ];
 
+/**
+ * Ids of the hand-maintained CVE-version rules. When OSV.dev has answered for a
+ * package these are redundant and, being hand-written, are the likelier of the
+ * two to be stale — so they stand down. They remain the only such coverage when
+ * running with --offline.
+ */
+export const GUARDVIBE_CVE_RULE_IDS: ReadonlySet<string> = new Set(
+  cveVersionRules.map((r) => r.id),
+);
+
 export const GUARDVIBE_ATTRIBUTION =
   'GuardVibe (github.com/goklab/guardvibe), Copyright 2026 GokLab, Apache-2.0';

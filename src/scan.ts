@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { walk } from './utils/files.js';
 import { detectFramework } from './utils/detect.js';
 import { SCANNERS, communityScanner } from './scanners/index.js';
+import { GUARDVIBE_CVE_RULE_IDS } from './vendor/guardvibe/index.js';
 import { SEVERITY_ORDER } from './types.js';
 import type { CheckSummary, Finding, ProjectContext, Severity } from './types.js';
 
@@ -70,7 +71,13 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
     }
   }
 
-  let filtered = findings;
+  // OSV.dev is authoritative and current; the vendored CVE-version regexes are
+  // neither. If OSV answered for this project, stand them down rather than
+  // report the same advisory twice from two sources of differing freshness.
+  const osvAnswered = checks.some((c) => c.label.startsWith('Known vulnerabilities'));
+  let filtered = osvAnswered
+    ? findings.filter((f) => !GUARDVIBE_CVE_RULE_IDS.has(f.id))
+    : findings;
   if (options.ignore?.length) {
     const ignored = new Set(options.ignore.map((s) => s.toUpperCase()));
     filtered = filtered.filter((f) => !ignored.has(f.id.toUpperCase()));

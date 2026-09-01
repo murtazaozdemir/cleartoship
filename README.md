@@ -58,6 +58,7 @@ npx cleartoship
 | **CTS021** | high | Dependency registered days ago with near-zero downloads (slopsquat shape) |
 | **CTS022** | low | Runtime dependency with almost no users |
 | **CTS023** | high/medium | Name is one edit from a popular package (`expres` → `express`) |
+| **CTS024** | by CVSS | Dependency version has a **published advisory**, resolved live from [OSV.dev](https://osv.dev) |
 | **CTS025** | low | Dependency deprecated upstream |
 | **CTS026** | critical | Registry serves HTTP 451 — the package was pulled for malware |
 | **CTS027** | critical | Package was unpublished but still has installs; the name is open to takeover |
@@ -76,6 +77,7 @@ reaches a manifest.
 | **CTS031** | critical | Server secret routed through a `NEXT_PUBLIC_` variable |
 | **CTS032** | high | `.env` in a git repo with no matching `.gitignore` rule |
 | **CTS033** | critical | `'use client'` component reaching for a server-only secret |
+| **GL-\*** | high/critical | 219 further credential providers, vendored from [gitleaks](https://github.com/gitleaks/gitleaks) (MIT), gated on Shannon entropy |
 
 **Community ruleset** — 436 additional rules vendored from
 [GuardVibe](https://github.com/goklab/guardvibe) (Apache-2.0)
@@ -161,8 +163,16 @@ Four scanners, all static — nothing is uploaded and no database is contacted.
    one edit away from a popular package. Results are cached for 24h under
    `~/.cache/cleartoship`.
 4. **Secrets & client boundary** — pattern plus verification: candidate JWTs are decoded and
-   only reported when the payload actually says `role: service_role`. Values in test fixtures,
-   docs and commented-out counter-examples are downgraded rather than reported as breaches.
+   only reported when the payload actually says `role: service_role`. 15 hand-tuned patterns
+   cover the providers that matter most; 219 more come from the vendored gitleaks ruleset,
+   each gated on a keyword prefilter and a Shannon entropy threshold so that
+   `your_api_key_here` never reads as a breach. Values in test fixtures, docs and
+   commented-out counter-examples are downgraded rather than reported.
+5. **Known vulnerabilities** — dependency versions are resolved from
+   `package-lock.json` / `pnpm-lock.yaml` / `yarn.lock` (falling back to the range floor)
+   and queried against OSV.dev, the database behind Google's `osv-scanner`. Live data
+   beats hand-written version regexes, which go stale the week they are written — so when
+   OSV answers, the vendored CVE rules stand down. `--offline` reverses that.
 
 ### Design notes
 

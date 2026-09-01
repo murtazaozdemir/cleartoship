@@ -4,6 +4,10 @@ import { Suppressions } from '../utils/suppress.js';
 import { emptyResult } from '../types.js';
 import type { Finding, ProjectContext, ScanResult, Scanner, Severity } from '../types.js';
 import { join } from 'node:path';
+import { shannonEntropy } from '../utils/entropy.js';
+import {
+  GITLEAKS_RULES, GITLEAKS_STOPWORDS, GITLEAKS_ATTRIBUTION,
+} from '../vendor/gitleaks/rules.js';
 
 interface Pattern {
   id: string;
@@ -68,6 +72,28 @@ const PLACEHOLDER =
 
 /** The same character five or more times running, as in a filler-value key. */
 const REPEATED_RUN = /(.)\1{4,}/;
+
+/**
+ * Vendored gitleaks rules withheld as noisy in this tool's context, measured
+ * across the fixtures and the reference corpus. Each carries its reason.
+ */
+const GITLEAKS_WITHHELD = new Map<string, string>([
+  [
+    'generic-api-key',
+    "gitleaks' own catch-all for unknown providers. It matches any `key`-ish identifier next " +
+      "to a quoted string, so it fires on ordinary arrays of method names ('auth.getUser', " +
+      "'auth.getClaims') and on SQL column lists — 97 of 118 hits across the reference corpus " +
+      'were false. The providers that matter are covered precisely by PATTERNS above.',
+  ],
+  [
+    'sourcegraph-access-token',
+    'matches any 40-character hex string, so every SHA-pinned GitHub Action ' +
+      '(`uses: actions/checkout@<sha>`) is reported as a leaked token',
+  ],
+]);
+
+/** Git object ids and integrity digests are hashes, not credentials. */
+const HEX_DIGEST = /^[a-f0-9]{40}$|^[a-f0-9]{64}$/i;
 
 /**
  * Paths where a credential-shaped string is a fixture, not a deployed secret.
@@ -161,6 +187,7 @@ export const secretsScanner: Scanner = {
           const key = `${relPath}:${line}:${pattern.id}`;
           if (seen.has(key)) continue;
           seen.add(key);
+          seen.add(`${relPath}:${line}:builtin`);
 
           const redacted = value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
           // Redact first, then truncate: a long key would otherwise be cut off
@@ -200,6 +227,80 @@ export const secretsScanner: Scanner = {
             owasp: 'A04:2025 - Cryptographic Failures',
             meta: { kind: pattern.id, clientComponent },
           });
+        }
+      }
+
+      // Broad provider coverage from the vendored gitleaks ruleset. The
+      // hand-written PATTERNS above stay first: they carry tuned severities and
+      // extra verification (decoding a JWT to confirm `role: service_role`), so
+      // anything they already reported on this line is not reported twice.
+      const lowerSource = source.toLowerCase();
+      for (const rule of GITLEAKS_RULES) {
+        if (GITLEAKS_WITHHELD.has(rule.id)) continue;
+        // Cheap substring prefilter before touching the regex.
+        if (rule.keywords.length > 0 && !rule.keywords.some((k) => lowerSource.includes(k))) {
+          continue;
+        }
+        rule.pattern.lastIndex = 0;
+        let g: RegExpExecArray | null;
+        let hits = 0;
+        while ((g = rule.pattern.exec(source)) !== null) {
+          if (g[0].length === 0) {
+            rule.pattern.lastIndex++;
+            continue;
+          }
+          const secret = g[1] ?? g[0];
+          const line = lineAt(source, g.index);
+
+          if (HEX_DIGEST.test(secret)) continue;
+          if (rule.entropy !== null && shannonEntropy(secret) < rule.entropy) continue;
+          if (PLACEHOLDER.test(secret) || REPEATED_RUN.test(secret)) continue;
+          if (GITLEAKS_STOPWORDS.some((w) => secret.toLowerCase().includes(w))) continue;
+          if (isCommentedOut(source, g.index)) continue;
+          // A hand-written pattern already claimed this location.
+          if (seen.has(`${relPath}:${line}:builtin`)) continue;
+
+          const findingId = `GL-${rule.id}`;
+          const key = `${relPath}:${line}:${findingId}`;
+          if (seen.has(key) || suppress.suppressed(line, findingId)) continue;
+          seen.add(key);
+
+          const redacted =
+            secret.length > 14 ? `${secret.slice(0, 6)}\u2026${secret.slice(-4)}` : secret;
+          const rawLine = source.split('\n')[line - 1] ?? '';
+          const safeLine = rawLine.split(secret).join(redacted).trim();
+
+          result.findings.push({
+            id: findingId,
+            severity: isExample || fixtureFile ? 'low' : clientComponent ? 'critical' : 'high',
+            title: `Hardcoded credential (${rule.id})`,
+            detail:
+              rule.description +
+              ` The matched value (\`${redacted}\`) scores ` +
+              `${shannonEntropy(secret).toFixed(1)} bits/char of entropy, which is consistent with a ` +
+              'real credential rather than a placeholder.' +
+              (clientComponent
+                ? ' This file is a client component, so the value ships in the browser bundle.'
+                : '') +
+              (isExample || fixtureFile
+                ? ' (Path looks like an example, test or docs file, so the severity is reduced.)'
+                : ''),
+            fix:
+              'Rotate this credential at the provider — assume it is burned — then move it to an ' +
+              'environment variable read only on the server, and purge it from git history.',
+            file: relPath,
+            line,
+            snippet: safeLine.length > 160 ? safeLine.slice(0, 157) + '...' : safeLine,
+            cwe: 'CWE-798: Use of Hard-coded Credentials',
+            owasp: 'A04:2025 - Cryptographic Failures',
+            meta: {
+              source: 'gitleaks',
+              rule: rule.id,
+              attribution: GITLEAKS_ATTRIBUTION,
+              entropy: Number(shannonEntropy(secret).toFixed(2)),
+            },
+          });
+          if (++hits >= 3) break;
         }
       }
 
@@ -368,8 +469,11 @@ export const secretsScanner: Scanner = {
 
     const leaked = result.findings.filter((f) => f.id !== 'CTS032' && f.severity !== 'low').length;
     result.checks.push({
-      label: `Secret & client-bundle boundary (${filesScanned} file${filesScanned === 1 ? '' : 's'} inspected)`,
+      label:
+        `Secret & client-bundle boundary (${filesScanned} file${filesScanned === 1 ? '' : 's'}, ` +
+        `${PATTERNS.length + GITLEAKS_RULES.length - GITLEAKS_WITHHELD.size} credential patterns)`,
       passed: leaked === 0,
+      note: `${GITLEAKS_WITHHELD.size} gitleaks rules withheld as noisy`,
     });
     return result;
   },

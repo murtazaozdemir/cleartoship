@@ -1,6 +1,9 @@
-import { basename } from 'node:path';
+import { basename, join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { read, rel, isProse, lineAt } from '../utils/files.js';
 import { Registry, pool } from '../utils/registry.js';
+import { queryOsv, severityFromCvss } from '../utils/osv.js';
+import type { OsvQuery } from '../utils/osv.js';
 import { POPULAR_NPM, POPULAR_PYPI, nearestPopular } from '../data/popular.js';
 import { emptyResult } from '../types.js';
 import type { Finding, ProjectContext, ScanResult, Scanner } from '../types.js';
@@ -177,6 +180,71 @@ function collectInstallScriptFindings(source: string, relPath: string): Finding[
   return findings;
 }
 
+/**
+ * Resolves the version actually installed for each declared dependency.
+ *
+ * A manifest only carries a range, and OSV needs an exact version. Lockfiles
+ * are the truth, so they are read directly (bypassing the walker's size cap,
+ * since a lockfile is routinely megabytes). Where no lockfile exists, the
+ * range's floor is used: `^14.2.3` resolves to `14.2.3`, which is the oldest
+ * version the range permits and therefore the one worth checking.
+ */
+function resolveVersions(root: string, declared: Declared[]): Map<string, string> {
+  const resolved = new Map<string, string>();
+
+  const readIfPresent = (name: string): string | null => {
+    try {
+      return readFileSync(join(root, name), 'utf8');
+    } catch {
+      return null;
+    }
+  };
+
+  const npmLock = readIfPresent('package-lock.json');
+  if (npmLock) {
+    try {
+      const doc = JSON.parse(npmLock);
+      for (const [path, entry] of Object.entries<any>(doc.packages ?? {})) {
+        if (!path.startsWith('node_modules/')) continue;
+        const name = path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
+        if (entry?.version) resolved.set(name, String(entry.version));
+      }
+      for (const [name, entry] of Object.entries<any>(doc.dependencies ?? {})) {
+        if (entry?.version && !resolved.has(name)) resolved.set(name, String(entry.version));
+      }
+    } catch {
+      /* a malformed lockfile just means we fall back to the range floor */
+    }
+  }
+
+  const pnpmLock = readIfPresent('pnpm-lock.yaml');
+  if (pnpmLock) {
+    // Entries look like `/next@14.2.3:` (v6/v9) or `/next/14.2.3:` (v5).
+    const re = /^\s{2}\/?((?:@[^/\s]+\/)?[^/@\s]+)[@/](\d+\.\d+\.\d+[^\s:(]*)/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(pnpmLock)) !== null) {
+      if (!resolved.has(m[1]!)) resolved.set(m[1]!, m[2]!);
+    }
+  }
+
+  const yarnLock = readIfPresent('yarn.lock');
+  if (yarnLock) {
+    const re = /^"?((?:@[^/\s]+\/)?[^@\s"]+)@[^\n]*?:\n(?:\s+[^\n]*\n)*?\s+version:?\s+"?([^"\s]+)"?/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(yarnLock)) !== null) {
+      if (!resolved.has(m[1]!)) resolved.set(m[1]!, m[2]!);
+    }
+  }
+
+  // Fall back to the floor of each declared range.
+  for (const d of declared) {
+    if (resolved.has(d.name)) continue;
+    const floor = /(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)/.exec(d.range)?.[1];
+    if (floor) resolved.set(d.name, floor);
+  }
+  return resolved;
+}
+
 export const dependencyScanner: Scanner = {
   name: 'Dependency hallucination & slopsquatting',
 
@@ -210,10 +278,15 @@ export const dependencyScanner: Scanner = {
     const checkable = declared.filter(
       (d) => !/^(file:|link:|workspace:|portal:|git\+|https?:|github:|npm:)/.test(d.range),
     );
+    // Dedupe by package, but let a manifest entry win over a mention in prose.
+    // Files are walked alphabetically, so AGENTS.md is seen before package.json;
+    // without this, a real dependency is recorded as a prose reference, which
+    // both mislocates the finding and skips version resolution for it.
     const unique = new Map<string, Declared>();
     for (const d of checkable) {
       const key = `${d.ecosystem}:${d.name}`;
-      if (!unique.has(key)) unique.set(key, d);
+      const existing = unique.get(key);
+      if (!existing || (existing.fromProse && !d.fromProse)) unique.set(key, d);
     }
     const list = [...unique.values()];
 
@@ -403,6 +476,86 @@ export const dependencyScanner: Scanner = {
         });
       }
     });
+
+    // Known vulnerabilities, from OSV.dev rather than hand-maintained version
+    // patterns. Only packages that exist and resolve to a concrete version can
+    // be queried.
+    const versions = resolveVersions(ctx.root, declared);
+    const osvQueries: OsvQuery[] = [];
+    const osvSubjects: Declared[] = [];
+    list.forEach((d, i) => {
+      if (!facts[i]!.exists || facts[i]!.error) return;
+      if (d.fromProse) return; // a mention in prose is not an installed version
+      const version = versions.get(d.name);
+      if (!version) return;
+      osvQueries.push({
+        name: d.name,
+        version,
+        ecosystem: d.ecosystem === 'npm' ? 'npm' : 'PyPI',
+      });
+      osvSubjects.push(d);
+    });
+
+    let osvChecked = 0;
+    if (osvQueries.length > 0) {
+      const { results: vulnResults, failed } = await queryOsv(osvQueries);
+      if (failed) {
+        result.warnings.push(
+          'OSV.dev lookup failed; known-vulnerability results are incomplete for this run.',
+        );
+      } else {
+        osvChecked = osvQueries.length;
+      }
+
+      vulnResults.forEach((vulns, i) => {
+        if (vulns.length === 0) return;
+        const d = osvSubjects[i]!;
+        const q = osvQueries[i]!;
+        // Report the worst one per package; the rest are listed in meta.
+        const worst = vulns.reduce((a, b) => ((b.cvss ?? 0) > (a.cvss ?? 0) ? b : a));
+        const cve = worst.aliases.find((a) => a.startsWith('CVE-')) ?? worst.id;
+        const others = vulns.length - 1;
+
+        result.findings.push({
+          id: 'CTS024',
+          severity: severityFromCvss(worst.cvss),
+          title: `Dependency has a known vulnerability (${cve})`,
+          detail:
+            `\`${d.name}@${q.version}\` is affected by ${cve}: ${worst.summary}` +
+            (worst.cvss !== null ? ` CVSS ${worst.cvss}.` : '') +
+            (others > 0
+              ? ` ${others} further advisor${others === 1 ? 'y' : 'ies'} also affect this version.`
+              : ''),
+          fix: worst.fixedIn
+            ? `Upgrade \`${d.name}\` to ${worst.fixedIn} or later.`
+            : `No fixed version is published yet. Check https://osv.dev/vulnerability/${worst.id} for mitigations.`,
+          file: d.file,
+          line: d.line,
+          cwe: 'CWE-1395: Dependency on Vulnerable Third-Party Component',
+          owasp: 'A03:2025 - Software Supply Chain Failures',
+          meta: {
+            package: d.name,
+            version: q.version,
+            resolvedFrom: versions.has(d.name) ? 'lockfile-or-range' : 'range',
+            advisories: vulns.map((v) => ({
+              id: v.id,
+              aliases: v.aliases,
+              cvss: v.cvss,
+              fixedIn: v.fixedIn,
+            })),
+          },
+        });
+      });
+
+      if (osvChecked > 0) {
+        const vulnerable = result.findings.filter((f) => f.id === 'CTS024').length;
+        result.checks.push({
+          label: `Known vulnerabilities (${osvChecked} resolved versions checked against OSV.dev)`,
+          passed: vulnerable === 0,
+          note: vulnerable > 0 ? `${vulnerable} affected` : undefined,
+        });
+      }
+    }
 
     const missing = result.findings.filter((f) =>
       ['CTS020', 'CTS026', 'CTS027'].includes(f.id),
