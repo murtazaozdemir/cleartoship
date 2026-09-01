@@ -79,6 +79,14 @@ reaches a manifest.
 | **CTS033** | critical | `'use client'` component reaching for a server-only secret |
 | **GL-\*** | high/critical | 219 further credential providers, vendored from [gitleaks](https://github.com/gitleaks/gitleaks) (MIT), gated on Shannon entropy |
 
+**Logging, error-handling & deserialization** — the detectable slices of A08/A09/A10
+
+| Rule | Severity | What it catches |
+| --- | --- | --- |
+| **CTS070** | high/medium | Secret, token or PII (or a whole request body) written to a log (A09) |
+| **CTS071** | high/medium | A security check that **fails open** — `catch { return true }` — or swallows its error (A10) |
+| **CTS072** | high | Insecure deserialization of untrusted data — `unserialize`, `pickle.loads`, unsafe `yaml.load` (A08) |
+
 **Community ruleset** — 436 additional rules vendored from
 [GuardVibe](https://github.com/goklab/guardvibe) (Apache-2.0)
 
@@ -94,6 +102,41 @@ per rule in `src/scanners/community.ts`. Run `--no-community` to use only
 ClearToShip's rules. See [ATTRIBUTION.md](ATTRIBUTION.md).
 
 Findings map to **OWASP Top 10:2025** and CWE.
+
+## OWASP Top 10:2025 coverage — honest version
+
+ClearToShip is not an even, "100% coverage" scanner and does not claim to be —
+it is strongest exactly where AI-generated code fails. Coverage by category:
+
+| Category | Coverage | What we detect |
+| --- | --- | --- |
+| **A01** Broken Access Control | 🟢 Strong | Missing Server Action / route auth, RLS holes, IDOR, definer bypasses |
+| **A03** Supply Chain Failures | 🟢 Strong | Hallucinated / slopsquat / typosquat packages, live CVEs (OSV), install hooks |
+| **A07** Authentication Failures | 🟢 Strong | `getSession` misuse, weak sessions, JWT (mostly vendored) |
+| **A02** Security Misconfiguration | 🟢 Strong | Docker, Terraform, headers, CORS — via the vendored pack |
+| **A05** Injection | 🟢 Strong | SQLi, XSS, command injection |
+| **A04** Cryptographic Failures | 🟡 Moderate | Hardcoded keys (234 credential patterns), weak hashing |
+| **A09** Logging & Alerting Failures | 🟡 Targeted | **Secrets / PII written to logs** (CTS070) — the statically knowable slice |
+| **A10** Mishandling Exceptions | 🟡 Targeted | **Fail-open / swallowed error on a security check** (CTS071) |
+| **A08** Data & Integrity Failures | 🟡 Targeted | Unverified webhooks (CTS042), **insecure deserialization** (CTS072) |
+| **A06** Insecure Design | 🔴 Not statically detectable | Missing threat modeling is an architecture concern — no static scanner covers it, and we don't pretend to |
+
+Two honest points a reviewer would raise, answered up front:
+
+- **A06 and A09 are hard for _any_ static tool.** A06 (Insecure Design) is about
+  missing threat modeling — you cannot grep for "the developer didn't consider an
+  abuse case." A09 (Logging failures) is largely a runtime/ops concern. Semgrep,
+  Snyk and CodeQL have the same limits. ClearToShip covers the *detectable slices*
+  (secrets in logs, fail-open error handling) and is honest that the rest needs a
+  human threat model and runtime observability, not a scanner.
+- **Coverage is uneven on purpose.** The thesis is "the gaps LLM-generated code
+  leaves," which cluster in A01/A03/A07/A04 — so that is where the rules cluster.
+
+Running with `--no-community` (first-party rules only) covers **8 of 10**
+categories directly (A01, A03, A04, A05, A07, A08, A09, A10); the community pack
+adds A02 and broadens A05/A07.
+
+
 
 ## Usage
 

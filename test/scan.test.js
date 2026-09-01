@@ -493,3 +493,36 @@ test('webhook that verifies via a framework helper or sig header is not flagged'
     'a webhook that reads the signature header + verifies must not be flagged',
   );
 });
+
+test('A09/A10/A08 logic rules fire precisely and skip the safe cases', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+  const ids = (id) => result.findings.filter((f) => f.id === id);
+
+  // A09 — secrets/PII in logs, but NOT a non-sensitive object or a string message.
+  const logs = ids('CTS070');
+  assert.ok(logs.length >= 3, 'should catch logged password, token, and request body');
+  assert.ok(logs.some((f) => f.title.includes('Request body')), 'whole-body log flagged');
+  assert.ok(!logs.some((f) => f.line === 8), 'console.log("user", user) must not fire');
+
+  // A10 — fails-open flagged, fail-closed not.
+  const failOpen = ids('CTS071');
+  assert.ok(failOpen.some((f) => f.severity === 'high'), 'catch { return true } in a verify fn is high');
+  assert.ok(
+    !failOpen.some((f) => f.meta?.function === 'safeVerify'),
+    'catch { return false } must not be flagged',
+  );
+
+  // A08 — insecure deserialization in both JS and Python.
+  const deser = ids('CTS072');
+  assert.ok(deser.some((f) => f.file.endsWith('.ts')), 'node-serialize unserialize flagged');
+  assert.ok(deser.some((f) => f.file.endsWith('.py')), 'pickle/yaml.load flagged');
+
+  for (const f of [...logs, ...failOpen, ...deser]) {
+    assert.match(f.owasp, /A0[89]|A10/, 'maps to A08/A09/A10');
+  }
+});
+
+test('logic rules do not fire on the clean fixture', async () => {
+  const result = await scan({ root: CLEAN, offline: true });
+  assert.ok(!result.findings.some((f) => ['CTS070', 'CTS071', 'CTS072'].includes(f.id)));
+});

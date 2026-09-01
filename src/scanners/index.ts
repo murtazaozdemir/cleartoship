@@ -3,6 +3,7 @@ import { rlsScanner } from './rls.js';
 import { dependencyScanner } from './dependencies.js';
 import { secretsScanner } from './secrets.js';
 import { communityScanner } from './community.js';
+import { logicScanner } from './logic.js';
 import type { Scanner } from '../types.js';
 
 export const SCANNERS: Scanner[] = [
@@ -10,6 +11,7 @@ export const SCANNERS: Scanner[] = [
   serverActionsScanner,
   rlsScanner,
   secretsScanner,
+  logicScanner,
   communityScanner,
 ];
 
@@ -19,4 +21,5 @@ export {
   dependencyScanner,
   secretsScanner,
   communityScanner,
+  logicScanner,
 };
