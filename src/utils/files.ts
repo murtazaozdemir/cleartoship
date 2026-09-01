@@ -11,6 +11,14 @@ const SKIP_DIRS = new Set([
 const SCAN_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.sql',
   '.json', '.txt', '.toml', '.env', '.yaml', '.yml',
+  // Prose files matter: AI agents copy `npm install <hallucination>` out of
+  // READMEs and agent instruction files long before it reaches a manifest.
+  '.md', '.mdc', '.mdx',
+]);
+
+/** Instruction files read by coding agents. No extension, but high signal. */
+const AGENT_FILES = new Set([
+  '.cursorrules', '.windsurfrules', '.clinerules', '.aiderrules', '.goosehints',
 ]);
 
 /** Files bigger than this are almost certainly bundles or fixtures, not source. */
@@ -44,7 +52,12 @@ export function walk(root: string): string[] {
       const dot = entry.lastIndexOf('.');
       const ext = dot === -1 ? '' : entry.slice(dot);
       // .env, .env.local, requirements.txt and friends have no useful extension.
-      if (SCAN_EXTS.has(ext) || entry.startsWith('.env') || entry === 'requirements.txt') {
+      if (
+        SCAN_EXTS.has(ext) ||
+        AGENT_FILES.has(entry) ||
+        entry.startsWith('.env') ||
+        entry === 'requirements.txt'
+      ) {
         found.push(full);
       }
     }
@@ -93,4 +106,10 @@ export function isScript(file: string): boolean {
 
 export function isSql(file: string): boolean {
   return file.endsWith('.sql');
+}
+
+/** Prose and agent-instruction files, where install commands get copy-pasted from. */
+export function isProse(file: string): boolean {
+  const base = file.slice(file.lastIndexOf('/') + 1);
+  return /\.(md|mdc|mdx|txt)$/.test(base) || AGENT_FILES.has(base);
 }

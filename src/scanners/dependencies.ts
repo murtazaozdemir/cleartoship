@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { read, rel } from '../utils/files.js';
+import { read, rel, isProse, lineAt } from '../utils/files.js';
 import { Registry, pool } from '../utils/registry.js';
 import { POPULAR_NPM, POPULAR_PYPI, nearestPopular } from '../data/popular.js';
 import { emptyResult } from '../types.js';
@@ -16,6 +16,8 @@ interface Declared {
   file: string;
   line: number;
   dev: boolean;
+  /** Harvested from an install command in prose rather than a manifest. */
+  fromProse?: boolean;
 }
 
 function collectFromPackageJson(source: string, relPath: string): Declared[] {
@@ -91,13 +93,99 @@ function collectFromPyproject(source: string, relPath: string): Declared[] {
   return out;
 }
 
+/** Valid npm package name, optionally scoped. */
+const NPM_NAME = String.raw`(?:@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*`;
+
+const INSTALL_COMMAND = new RegExp(
+  String.raw`\b(?:npm\s+(?:i|install|add)|yarn\s+add|pnpm\s+(?:i|install|add)|bun\s+(?:i|install|add)|npx|pnpm\s+dlx|bunx)\s+([^\n\`|;&>]+)`,
+  'gi',
+);
+const PIP_COMMAND =
+  /\b(?:pip3?\s+install|uv\s+pip\s+install|poetry\s+add|uv\s+add)\s+([^\n`|;&>]+)/gi;
+
+/**
+ * Pulls package names out of install commands written in prose. Agent
+ * instruction files and READMEs are where a hallucinated name is copy-pasted
+ * from long before anyone adds it to a manifest, so they are worth reading.
+ */
+function collectFromProse(source: string, relPath: string): Declared[] {
+  const out: Declared[] = [];
+  const npmName = new RegExp(`^${NPM_NAME}$`);
+
+  const harvest = (re: RegExp, ecosystem: 'npm' | 'pypi', firstArgOnly: boolean) => {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source)) !== null) {
+      const args = m[1]!.trim().split(/\s+/);
+      const line = lineAt(source, m.index);
+      for (const arg of args) {
+        if (arg.startsWith('-')) continue; // flag
+        // Strip a version spec, but not a scope: `@types/node` vs `react@18`.
+        const bare = arg.replace(/(?!^)@[^@/]*$/, '').replace(/\[.*\]$/, '');
+        if (!bare || bare.includes('/') && !bare.startsWith('@')) continue; // path or URL
+        if (/^[.~/]|:/.test(bare)) continue;
+        const ok = ecosystem === 'npm' ? npmName.test(bare) : /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(bare);
+        if (!ok) continue;
+        out.push({ name: bare, range: '', ecosystem, file: relPath, line, dev: false, fromProse: true });
+        if (firstArgOnly) break;
+      }
+    }
+  };
+
+  harvest(INSTALL_COMMAND, 'npm', false);
+  harvest(PIP_COMMAND, 'pypi', false);
+  return out;
+}
+
+/** Lifecycle scripts that run automatically on `npm install`. */
+const INSTALL_HOOKS = ['preinstall', 'install', 'postinstall', 'prepare', 'prepublish'];
+const DANGEROUS_SCRIPT =
+  /\b(curl|wget|https?:\/\/|base64\s+(-d|--decode)|eval\s|node\s+-e|child_process|\|\s*(sh|bash)\b|chmod\s+\+x)/i;
+
+function collectInstallScriptFindings(source: string, relPath: string): Finding[] {
+  let pkg: any;
+  try {
+    pkg = JSON.parse(source);
+  } catch {
+    return [];
+  }
+  const findings: Finding[] = [];
+  const lines = source.split('\n');
+  for (const hook of INSTALL_HOOKS) {
+    const script = pkg?.scripts?.[hook];
+    if (typeof script !== 'string' || !DANGEROUS_SCRIPT.test(script)) continue;
+    const line = Math.max(1, lines.findIndex((l) => l.includes(`"${hook}"`)) + 1);
+    findings.push({
+      id: 'CTS028',
+      severity: 'critical',
+      title: `Install hook \`${hook}\` runs network or shell code`,
+      detail:
+        `The \`${hook}\` script (\`${script.length > 120 ? script.slice(0, 117) + '...' : script}\`) executes ` +
+        'automatically on every `npm install`, including in CI and on every contributor’s machine, ' +
+        'before any code review happens. Fetching or evaluating code there is the standard ' +
+        'supply-chain execution path.',
+      fix:
+        'Move the work into an explicit script the developer opts into (`npm run setup`), or vendor ' +
+        'the artefact and verify its checksum instead of fetching it at install time.',
+      file: relPath,
+      line,
+      cwe: 'CWE-829: Inclusion of Functionality from Untrusted Control Sphere',
+      owasp: 'A03:2025 - Software Supply Chain Failures',
+      meta: { hook, script },
+    });
+  }
+  return findings;
+}
+
 export const dependencyScanner: Scanner = {
   name: 'Dependency hallucination & slopsquatting',
 
   applies(ctx) {
     return ctx.files.some((f) => {
       const b = basename(f);
-      return b === 'package.json' || b === 'requirements.txt' || b === 'pyproject.toml';
+      return (
+        b === 'package.json' || b === 'requirements.txt' || b === 'pyproject.toml' || isProse(f)
+      );
     });
   },
 
@@ -110,9 +198,12 @@ export const dependencyScanner: Scanner = {
       const source = read(file);
       if (source === null) continue;
       const relPath = rel(ctx.root, file);
-      if (b === 'package.json') declared.push(...collectFromPackageJson(source, relPath));
-      else if (b === 'requirements.txt') declared.push(...collectFromRequirements(source, relPath));
+      if (b === 'package.json') {
+        declared.push(...collectFromPackageJson(source, relPath));
+        result.findings.push(...collectInstallScriptFindings(source, relPath));
+      } else if (b === 'requirements.txt') declared.push(...collectFromRequirements(source, relPath));
       else if (b === 'pyproject.toml') declared.push(...collectFromPyproject(source, relPath));
+      else if (isProse(file)) declared.push(...collectFromProse(source, relPath));
     }
 
     // Local workspace references never hit a registry.
@@ -154,6 +245,52 @@ export const dependencyScanner: Scanner = {
       const popular = d.ecosystem === 'npm' ? POPULAR_NPM : POPULAR_PYPI;
       const registryName = d.ecosystem === 'npm' ? 'npm' : 'PyPI';
 
+      const origin = d.fromProse
+        ? `referenced by an install command in ${d.file}`
+        : `declared in ${d.file}`;
+
+      if (!f.exists && f.securityHold) {
+        result.findings.push({
+          id: 'CTS026',
+          severity: 'critical',
+          title: 'Dependency was removed by the registry for malware',
+          detail:
+            `\`${d.name}\` is ${origin}, and ${registryName} serves HTTP 451 for it — the response ` +
+            'reserved for a package taken down on legal or security grounds. This name was not merely ' +
+            'invented; it was published, weaponised and pulled.',
+          fix:
+            `Remove \`${d.name}\` everywhere it appears and treat any machine that installed it as ` +
+            'compromised: rotate the credentials that were present in that environment and audit the lockfile history.',
+          file: d.file,
+          line: d.line,
+          cwe: 'CWE-1357: Reliance on Insufficiently Trustworthy Component',
+          owasp: 'A03:2025 - Software Supply Chain Failures',
+          meta: { package: d.name, ecosystem: d.ecosystem, securityHold: true },
+        });
+        return;
+      }
+
+      if (!f.exists && f.unpublished) {
+        result.findings.push({
+          id: 'CTS027',
+          severity: 'critical',
+          title: 'Dependency was unpublished and its name is open to takeover',
+          detail:
+            `\`${d.name}\` is ${origin} but no longer exists on ${registryName}, yet it still records ` +
+            `${f.weeklyDownloads} weekly downloads. It was published and then withdrawn, so the name is ` +
+            'free for anyone to claim — and whoever claims it inherits every one of those installs.',
+          fix:
+            `Remove \`${d.name}\` and replace it with a maintained package. Your install is already ` +
+            'failing or falling back to a cache; the risk is the day someone republishes the name.',
+          file: d.file,
+          line: d.line,
+          cwe: 'CWE-1357: Reliance on Insufficiently Trustworthy Component',
+          owasp: 'A03:2025 - Software Supply Chain Failures',
+          meta: { package: d.name, ecosystem: d.ecosystem, unpublished: true, weeklyDownloads: f.weeklyDownloads },
+        });
+        return;
+      }
+
       if (!f.exists) {
         const near = nearestPopular(d.name, popular, 2);
         result.findings.push({
@@ -161,7 +298,7 @@ export const dependencyScanner: Scanner = {
           severity: 'critical',
           title: 'Dependency does not exist on the registry',
           detail:
-            `\`${d.name}\` is declared in ${d.file} but no such package is published on ${registryName}. ` +
+            `\`${d.name}\` is ${origin} but no such package is published on ${registryName}. ` +
             'This is the classic signature of an AI-hallucinated import. The name is unclaimed, so an ' +
             'attacker can register it and have their code execute in every install and CI run from then on.' +
             (near ? ` Did you mean \`${near}\`?` : ''),
@@ -172,7 +309,7 @@ export const dependencyScanner: Scanner = {
           line: d.line,
           cwe: 'CWE-1357: Reliance on Insufficiently Trustworthy Component',
           owasp: 'A03:2025 - Software Supply Chain Failures',
-          meta: { package: d.name, ecosystem: d.ecosystem, suggestion: near },
+          meta: { package: d.name, ecosystem: d.ecosystem, suggestion: near, fromProse: d.fromProse },
         });
         return;
       }
@@ -267,12 +404,17 @@ export const dependencyScanner: Scanner = {
       }
     });
 
-    const missing = result.findings.filter((f) => f.id === 'CTS020').length;
+    const missing = result.findings.filter((f) =>
+      ['CTS020', 'CTS026', 'CTS027'].includes(f.id),
+    ).length;
     result.checks.push({
       label: `Dependency verification (${list.length} package${list.length === 1 ? '' : 's'} checked against npm/PyPI)`,
       passed: missing === 0,
-      note: missing > 0 ? `${missing} do not exist` : undefined,
+      note: missing > 0 ? `${missing} could not be resolved` : undefined,
     });
     return result;
   },
 };
+
+/** Exposed for tests: harvest package names from prose install commands. */
+export const collectProseForTest = collectFromProse;

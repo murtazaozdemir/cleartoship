@@ -48,3 +48,28 @@ create view public.workspace_overview as
   select w.id, w.name, p.email from public.workspaces w join public.profiles p on p.id = w.user_id;
 
 grant insert, update on public.audit_log to anon;
+
+create view public.all_users as
+  select id, email, raw_user_meta_data from auth.users;
+
+create materialized view public.revenue_rollup as
+  select user_id, sum(amount) from public.payments group by user_id;
+
+create policy "workspaces readable by team"
+  on public.workspaces for select
+  to authenticated
+  using (true);
+
+insert into storage.buckets (id, name, public) values ('uploads', 'uploads', true);
+
+create policy "public can list objects"
+  on storage.objects for select
+  to anon
+  using (true);
+
+grant execute on function public.promote(uuid) to anon;
+
+create policy "profiles readable by owner"
+  on public.profiles for select
+  to anon
+  using (id = (select auth.uid()));

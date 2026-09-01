@@ -11,7 +11,7 @@ import type { Finding, ProjectContext, ScanResult, Scanner } from '../types.js';
  * `client.auth.getUser` and a bare `getUser` all hit.
  */
 const AUTH_CALLS = [
-  'auth.getUser', 'auth.getSession', 'auth.getClaims', 'getUser', 'getSession',
+  'auth.getUser', 'auth.getClaims', 'getUser', 'getSession',
   'getServerSession', 'getServerAuthSession', 'currentUser', 'auth', 'clerkClient',
   'getAuth', 'validateRequest', 'verifySession', 'requireUser', 'requireAuth',
   'requireSession', 'assertAuthenticated', 'getCurrentUser', 'getLoggedInUser',
@@ -38,6 +38,18 @@ const VALIDATION_CALLS = new Set([
   'parse', 'safeParse', 'parseAsync', 'safeParseAsync', 'validate', 'validateSync',
   'assert', 'check', 'decode', 'is', 'coerce', 'cast', 'schema', 'input', 'with',
 ]);
+
+/**
+ * Verification calls that make an inbound webhook trustworthy.
+ */
+const SIGNATURE_CHECKS = [
+  'webhooks.constructEvent', 'constructEvent', 'constructEventAsync', 'verifyHeader',
+  'verify', 'verifySignature', 'createHmac', 'timingSafeEqual', 'Webhook', 'validateRequest',
+  'verifyWebhook', 'verifyWebhookSignature',
+];
+
+/** Schema escape hatches that make validation decorative. */
+const LOOSE_SCHEMA = /\.passthrough\s*\(|z\s*\.\s*(any|unknown)\s*\(|\.catchall\s*\(/g;
 
 const SERVICE_ROLE_HINTS = [
   'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_SERVICE_KEY', 'SERVICE_ROLE_KEY',
@@ -68,6 +80,13 @@ interface ActionInfo {
   serviceRoleLine: number | null;
   ownerScoped: boolean;
   mutationLine: number | null;
+  /** Line of a Supabase `auth.getSession()` used where getUser() is required. */
+  getSessionLine: number | null;
+  hasSignatureCheck: boolean;
+  /** Line where a whole request body is spread into a write. */
+  spreadLine: number | null;
+  looseSchemaLine: number | null;
+  readsAuthHeader: boolean;
 }
 
 function analyseFunction(path: any, name: string): ActionInfo {
@@ -83,19 +102,45 @@ function analyseFunction(path: any, name: string): ActionInfo {
     serviceRoleLine: null,
     ownerScoped: false,
     mutationLine: null,
+    getSessionLine: null,
+    hasSignatureCheck: false,
+    spreadLine: null,
+    looseSchemaLine: null,
+    readsAuthHeader: false,
   };
 
   const inspect = (inner: any) => {
     const full = calleeName(inner.node.callee);
     const tail = calleeTail(inner.node.callee);
 
-    if (matchesAny(full, AUTH_CALLS)) info.hasAuth = true;
+    // `supabase.auth.getSession()` reads the cookie without asking the auth
+    // server whether the token is still valid, so it proves nothing on the
+    // server. It must not satisfy the auth check via the generic `getSession`
+    // entry, which exists for hand-rolled helpers.
+    const isSupabaseGetSession = /(^|\.)auth\.getSession$/.test(full);
+    if (isSupabaseGetSession) {
+      info.getSessionLine ??= inner.node.loc?.start.line ?? info.line;
+    } else if (matchesAny(full, AUTH_CALLS)) {
+      info.hasAuth = true;
+    }
     if (matchesAny(full, AUTH_WRAPPERS)) info.hasAuth = true;
+    if (matchesAny(full, SIGNATURE_CHECKS)) info.hasSignatureCheck = true;
     if (VALIDATION_CALLS.has(tail)) info.hasValidation = true;
     if (MUTATION_CALLS.has(tail)) {
       info.hasMutation = true;
       if (info.mutationLine === null) {
         info.mutationLine = inner.node.loc?.start.line ?? info.line;
+      }
+      // `.update({ ...body })` writes whatever keys the caller chose to send.
+      for (const arg of inner.node.arguments ?? []) {
+        const props = arg?.type === 'ObjectExpression' ? arg.properties : null;
+        if (!props) continue;
+        for (const prop of props) {
+          if (prop?.type !== 'SpreadElement') continue;
+          const spreadOf = calleeName(prop.argument);
+          if (/^(this|process|env)\b/.test(spreadOf)) continue;
+          info.spreadLine ??= prop.loc?.start.line ?? info.line;
+        }
       }
     }
     if (tail === 'from' || tail === 'select' || tail === 'findMany' || tail === 'findUnique' || tail === 'findFirst') {
@@ -136,6 +181,7 @@ function analyseFunction(path: any, name: string): ActionInfo {
     },
     MemberExpression(inner: any) {
       const full = calleeName(inner.node);
+      if (/headers\.get$/.test(full) || full.endsWith('CRON_SECRET')) info.readsAuthHeader = true;
       for (const hint of SERVICE_ROLE_HINTS) {
         if (full.endsWith(hint)) {
           info.serviceRoleLine ??= inner.node.loc?.start.line ?? info.line;
@@ -231,8 +277,11 @@ export const serverActionsScanner: Scanner = {
           : 'Server Actions compile to public HTTP POST endpoints — anyone can invoke this by ID, the UI is not a gate.';
 
         const writes = info.hasMutation || (isRoute && HTTP_MUTATION_METHODS.has(httpMethod!));
+        const isWebhook =
+          isRoute && httpMethod === 'POST' && /webhook|\bhooks?\b|stripe|clerk|svix/i.test(relPath);
+        const isCron = isRoute && /(^|\/)(cron|scheduled|jobs?)(\/|$)/i.test(relPath);
 
-        if (writes && !info.hasAuth) {
+        if (writes && !info.hasAuth && info.getSessionLine === null) {
           push({
             id: 'CTS001',
             severity: 'critical',
@@ -294,6 +343,86 @@ export const serverActionsScanner: Scanner = {
           });
         }
 
+        if (info.getSessionLine !== null && !info.hasAuth) {
+          push({
+            id: 'CTS041',
+            severity: 'high',
+            title: `${kind} authenticates with getSession() instead of getUser()`,
+            detail:
+              `\`${name}\` calls \`supabase.auth.getSession()\` to decide who the caller is. On the ` +
+              'server that only decodes the session cookie — it never asks the auth server whether the ' +
+              'token is still valid, so a forged or revoked cookie passes. Supabase documents ' +
+              '`getSession()` as safe on the client only.',
+            fix:
+              'Use `const { data: { user } } = await supabase.auth.getUser()` instead, which revalidates ' +
+              'the JWT against the auth server, and branch on `user`.',
+            line: info.getSessionLine,
+            cwe: 'CWE-287: Improper Authentication',
+            owasp: 'A07:2025 - Authentication Failures',
+            meta: { action: name, kind },
+          });
+        }
+
+        if (info.spreadLine !== null) {
+          push({
+            id: 'CTS043',
+            severity: 'high',
+            title: `${kind} spreads caller-supplied data into a write`,
+            detail:
+              `\`${name}\` spreads an object it received into a database write, so every key the ` +
+              'caller chose to send is written. Adding `"is_admin": true` or `"credits": 999999` to the ' +
+              'request body is enough to set those columns — the classic mass-assignment escalation.',
+            fix:
+              'Write an explicit column list built from validated fields — ' +
+              '`{ name: parsed.data.name }` — rather than spreading the request body.',
+            line: info.spreadLine,
+            cwe: 'CWE-915: Improperly Controlled Modification of Dynamically-Determined Object Attributes',
+            owasp: 'A01:2025 - Broken Access Control',
+            meta: { action: name, kind },
+          });
+        }
+
+        if (isWebhook && !info.hasSignatureCheck) {
+          push({
+            id: 'CTS042',
+            severity: 'critical',
+            title: 'Webhook endpoint does not verify its signature',
+            detail:
+              `\`${relPath}\` looks like a webhook receiver but nothing in \`${name}\` verifies the ` +
+              'provider signature. Webhook URLs are not secret and the payload is entirely ' +
+              'attacker-controlled, so anyone who learns the URL can post a forged event — a fake ' +
+              '`checkout.session.completed` grants themselves a paid plan.',
+            fix:
+              'Verify before trusting anything in the body, e.g. ' +
+              '`stripe.webhooks.constructEvent(rawBody, sig, process.env.STRIPE_WEBHOOK_SECRET)` ' +
+              'for Stripe or `new Webhook(secret).verify(payload, headers)` for Clerk/svix. Read the ' +
+              'raw body, not the parsed JSON.',
+            line: info.line,
+            cwe: 'CWE-345: Insufficient Verification of Data Authenticity',
+            owasp: 'A08:2025 - Software & Data Integrity Failures',
+            meta: { kind, route: relPath },
+          });
+        }
+
+        if (isCron && !info.readsAuthHeader && !info.hasAuth) {
+          push({
+            id: 'CTS046',
+            severity: 'high',
+            title: 'Cron endpoint is callable by anyone',
+            detail:
+              `\`${relPath}\` is a scheduled job route, but \`${name}\` checks neither a shared ` +
+              'secret nor a session. The path is public HTTP like any other, so anyone can trigger the ' +
+              'job — repeatedly, and at a time of their choosing.',
+            fix:
+              'Compare an `Authorization` header against `process.env.CRON_SECRET` and return 401 on ' +
+              'mismatch. Vercel Cron sends that header automatically when the variable is set.',
+            line: info.line,
+            cwe: 'CWE-306: Missing Authentication for Critical Function',
+            owasp: 'A01:2025 - Broken Access Control',
+            meta: { kind, route: relPath },
+          });
+        }
+
         if (writes && info.hasAuth && !info.ownerScoped && info.params > 0) {
           push({
             id: 'CTS004',
@@ -313,6 +442,31 @@ export const serverActionsScanner: Scanner = {
           });
         }
       };
+
+      // Validation that opts out of validating. Reported per file, since the
+      // schema is usually declared at module scope, away from the action.
+      if (programUseServer || routeFile) {
+        LOOSE_SCHEMA.lastIndex = 0;
+        const loose = LOOSE_SCHEMA.exec(source);
+        if (loose) {
+          const line = source.slice(0, loose.index).split('\n').length;
+          push({
+            id: 'CTS044',
+            severity: 'medium',
+            title: 'Schema opts out of validating',
+            detail:
+              `\`${loose[0]}\` in a server-side module means the schema accepts keys it does not ` +
+              'declare. Input then passes validation while still carrying whatever extra fields the ' +
+              'caller attached, which is the situation the schema was added to prevent.',
+            fix:
+              'Drop `.passthrough()` / `.catchall()` and replace `z.any()` or `z.unknown()` with the ' +
+              'shape you actually expect. Zod strips unknown keys by default — that default is the point.',
+            line,
+            cwe: 'CWE-20: Improper Input Validation',
+            owasp: 'A05:2025 - Injection',
+          });
+        }
+      }
 
       traverse(ast, {
         ExportNamedDeclaration(path: any) {

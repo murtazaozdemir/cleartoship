@@ -16,26 +16,62 @@ npx cleartoship
 
 ## What it checks
 
+**Next.js server surface** — Server Actions, Route Handlers, client boundary
+
 | Rule | Severity | What it catches |
 | --- | --- | --- |
 | **CTS001** | critical | Server Action / Route Handler mutates the database with no session check |
-| **CTS002** | high | Action takes caller input and writes it with no runtime schema validation (mass assignment) |
+| **CTS002** | high | Action takes caller input and writes it with no runtime schema validation |
 | **CTS003** | critical | `SUPABASE_SERVICE_ROLE_KEY` client built inside a user-reachable action |
 | **CTS004** | medium | Authenticated mutation keyed only on a caller-supplied id (IDOR) |
+| **CTS040** | high | Client component reads a server-side `process.env` variable |
+| **CTS041** | high | `supabase.auth.getSession()` used as a server-side auth check — it does not revalidate the JWT |
+| **CTS042** | critical | Webhook endpoint accepts an unsigned, unverified payload |
+| **CTS043** | high | Request body spread straight into a database write (mass assignment) |
+| **CTS044** | medium | `.passthrough()` / `z.any()` makes the schema decorative |
+| **CTS045** | critical | AI SDK client set to `dangerouslyAllowBrowser: true` |
+| **CTS046** | high | Cron route with neither `CRON_SECRET` nor a session check |
+
+**Supabase / PostgreSQL** — schema, RLS, storage
+
+| Rule | Severity | What it catches |
+| --- | --- | --- |
 | **CTS010** | critical | Public table with Row Level Security never enabled |
 | **CTS011** | low | RLS on with no policies — fail-closed, but the feature is probably broken |
 | **CTS012** | critical | Policy grants writes with an always-true predicate |
 | **CTS013** | high | Anonymous `SELECT` over a table holding emails, tokens or billing ids |
 | **CTS014** | high | Table has a `user_id` column but no policy compares it to `auth.uid()` |
 | **CTS015** | medium | `SECURITY DEFINER` function without a pinned `search_path` |
-| **CTS016** | medium | API-exposed view running with definer rights |
+| **CTS016** | medium/high | View with definer rights, or a materialized view, exposed over the Data API |
 | **CTS017** | critical | `GRANT INSERT/UPDATE/DELETE … TO anon` |
 | **CTS018** | critical | Policy trusts `user_metadata`, which the user can edit themselves |
+| **CTS019** | critical | `auth.users` republished through a view in the public schema |
+| **CTS050** | medium | Overlapping permissive policies — they OR together and only widen access |
+| **CTS051** | high | Storage policy lets anyone list every object in every bucket |
+| **CTS052** | high | `SECURITY DEFINER` function executable by `anon` |
+
+**Supply chain** — hallucinated and hostile dependencies
+
+| Rule | Severity | What it catches |
+| --- | --- | --- |
 | **CTS020** | critical | Dependency that **does not exist** on npm/PyPI — a hallucinated import |
 | **CTS021** | high | Dependency registered days ago with near-zero downloads (slopsquat shape) |
 | **CTS022** | low | Runtime dependency with almost no users |
-| **CTS023** | high | Name is one edit from a popular package (`expres` → `express`) |
+| **CTS023** | high/medium | Name is one edit from a popular package (`expres` → `express`) |
 | **CTS025** | low | Dependency deprecated upstream |
+| **CTS026** | critical | Registry serves HTTP 451 — the package was pulled for malware |
+| **CTS027** | critical | Package was unpublished but still has installs; the name is open to takeover |
+| **CTS028** | critical | `postinstall` hook that curls, evals or shells out |
+
+Dependency rules read `package.json`, `requirements.txt` and `pyproject.toml` — **and**
+`README.md`, `AGENTS.md`, `CLAUDE.md` and `.cursorrules`, because a hallucinated
+`npm install` line gets copy-pasted out of an agent instruction file long before it
+reaches a manifest.
+
+**Secrets & client bundle**
+
+| Rule | Severity | What it catches |
+| --- | --- | --- |
 | **CTS030** | critical | Hardcoded provider key — Supabase service-role, Stripe live, OpenAI, AWS, GitHub … |
 | **CTS031** | critical | Server secret routed through a `NEXT_PUBLIC_` variable |
 | **CTS032** | high | `.env` in a git repo with no matching `.gitignore` rule |
@@ -137,14 +173,35 @@ console.log(result.counts); // { critical: 0, high: 2, medium: 1, low: 0, info: 
 | `1` | Findings at or above the threshold |
 | `2` | The scanner itself errored |
 
-## Prior art
+## Prior art, and what was taken from where
 
-ClearToShip deliberately occupies the gap between general-purpose scanners and the modern
-AI-assisted stack. It is not a replacement for [Semgrep](https://github.com/semgrep/semgrep),
-[Trivy](https://github.com/aquasecurity/trivy), [OSV-Scanner](https://github.com/google/osv-scanner),
-[TruffleHog](https://github.com/trufflesecurity/trufflehog) or Supabase's
-[splinter](https://github.com/supabase/splinter) — run those too. It answers a narrower
-question those tools don't: *given that an LLM wrote this, what did it forget?*
+ClearToShip occupies the gap between general-purpose scanners and the modern AI-assisted
+stack. It is not a replacement for [Semgrep](https://github.com/semgrep/semgrep),
+[Trivy](https://github.com/aquasecurity/trivy), [OSV-Scanner](https://github.com/google/osv-scanner)
+or [TruffleHog](https://github.com/trufflesecurity/trufflehog) — run those too. It answers a
+narrower question they don't: *given that an LLM wrote this, what did it forget?*
+
+The rule set was designed after surveying the field. What each source contributed:
+
+| Source | License | What was taken |
+| --- | --- | --- |
+| [supabase/splinter](https://github.com/supabase/splinter) | none stated | The vulnerability classes behind CTS010–019 and CTS050–052. Splinter runs SQL against a live database; these are static reimplementations against migration files. Verified by pointing ClearToShip at splinter's own `test/sql/` fixtures. |
+| [slopcheck](https://github.com/mattschaller/slopcheck) | MIT | Three distinctions worth making: HTTP 451 (pulled for malware) ≠ 404 (never existed) ≠ unpublished-with-installs (open to takeover) — CTS026/CTS027. And the idea of reading install commands out of prose and agent instruction files. |
+| [guardvibe](https://github.com/goklab/guardvibe) | Apache-2.0 | Coverage gaps: webhook signature verification, cron secrets, mass assignment, `dangerouslyAllowBrowser`, schema escape hatches, `getSession` vs `getUser` — CTS040–046. |
+
+**No rule content was copied.** Every check here is an independent implementation, and the
+detection engine is different in kind: ClearToShip parses TypeScript to an AST and replays SQL
+migrations into a schema model, where the regex-and-window approach used by several of these
+tools cannot express "this function has no auth check anywhere in its body".
+
+That distinction is not just technical pride — it is a licensing constraint. Two of the most
+tempting corpora, **TruffleHog** (800+ verified credential detectors) and
+**RouteWarden**, are **AGPL-3.0**; lifting their detectors into a commercial product carries
+the AGPL's network-use obligations. **semgrep-rules** ships under the bespoke *Semgrep Rules
+License v1.0*, which needs reading before any rule is reused. **splinter** and
+**supabase-exposure-check** publish no license at all, which means default copyright — ideas
+are free, expression is not. Vulnerability classes are facts and cannot be owned; regexes,
+queries and rule text can be.
 
 ## License
 

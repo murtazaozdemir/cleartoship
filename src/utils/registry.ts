@@ -17,6 +17,17 @@ export interface PackageFacts {
   repository?: string;
   maintainers?: number;
   deprecated?: boolean;
+  /**
+   * npm removed the package for malware and serves HTTP 451. This is a much
+   * stronger signal than "does not exist" — the name was actively weaponised.
+   */
+  securityHold?: boolean;
+  /**
+   * The package is gone from the registry but still has download traffic,
+   * meaning it was published, then unpublished. The name is free for anyone to
+   * take over and inherit those installs.
+   */
+  unpublished?: boolean;
   /** Set when the lookup itself failed (offline, rate limited, ...). */
   error?: string;
 }
@@ -75,6 +86,17 @@ export class Registry {
     return await res.json();
   }
 
+  /** Weekly downloads, or undefined when the endpoint has nothing to say. */
+  private async downloadsFor(encoded: string): Promise<number | undefined> {
+    try {
+      const dl = await this.getJson(`https://api.npmjs.org/downloads/point/last-week/${encoded}`);
+      if (typeof dl === 'object' && dl && typeof dl.downloads === 'number') return dl.downloads;
+    } catch {
+      /* the downloads API is flaky and non-essential */
+    }
+    return undefined;
+  }
+
   async lookup(name: string, ecosystem: 'npm' | 'pypi'): Promise<PackageFacts> {
     const key = `${ecosystem}:${name}`;
     const memo = this.memo.get(key);
@@ -113,19 +135,29 @@ export class Registry {
       `https://registry.npmjs.org/${encoded}`,
       'application/vnd.npm.install-v1+json',
     );
-    if (doc === 404) return { name, ecosystem: 'npm', exists: false };
+
+    // 451 is npm's "removed for malware" response. Never conflate it with 404.
+    if (doc === 451) {
+      return { name, ecosystem: 'npm', exists: false, securityHold: true };
+    }
+    if (doc === 404) {
+      // A name with no packument but real install traffic was published and then
+      // pulled, which leaves it open to takeover rather than merely invented.
+      const downloads = await this.downloadsFor(encoded);
+      return {
+        name,
+        ecosystem: 'npm',
+        exists: false,
+        weeklyDownloads: downloads,
+        unpublished: downloads !== undefined && downloads > 0,
+      };
+    }
     if (typeof doc === 'number') throw new Error(`npm registry returned ${doc}`);
 
     const versions = Object.keys(doc.versions ?? {});
     const facts: PackageFacts = { name, ecosystem: 'npm', exists: true, versions };
 
-    let downloads: number | undefined;
-    try {
-      const dl = await this.getJson(`https://api.npmjs.org/downloads/point/last-week/${encoded}`);
-      if (typeof dl === 'object' && dl && typeof dl.downloads === 'number') downloads = dl.downloads;
-    } catch {
-      /* the downloads API is flaky and non-essential */
-    }
+    const downloads = await this.downloadsFor(encoded);
     facts.weeklyDownloads = downloads;
 
     // The full document carries publish dates and maintainer counts, but it is
@@ -151,6 +183,7 @@ export class Registry {
   private async lookupPypi(name: string): Promise<PackageFacts> {
     const doc = await this.getJson(`https://pypi.org/pypi/${encodeURIComponent(name)}/json`);
     if (doc === 404) return { name, ecosystem: 'pypi', exists: false };
+    if (doc === 451) return { name, ecosystem: 'pypi', exists: false, securityHold: true };
     if (typeof doc === 'number') throw new Error(`PyPI returned ${doc}`);
 
     const releases: Record<string, any[]> = doc.releases ?? {};

@@ -64,7 +64,7 @@ const PATTERNS: Pattern[] = [
  * READMEs and rule fixtures are full of these and reporting them is pure noise.
  */
 const PLACEHOLDER =
-  /(your[_-]?|example|placeholder|sample|template|<[a-z_ -]+>|\.\.\.|\u2026|changeme|change_me|dummy|redacted|notreal|fake|mock|s3cret|abc123|abcdef|deadbeef|1234567|xxx|yyy|zzz|\bfoo\b|\bbar\b)/i;
+  /(your[_-]?|example|placeholder|sample|template|<[a-z_ -]+>|\.\.\.|\u2026|changeme|change_me|dummy|redacted|notreal|fake|mock|s3cret|abc123|deadbeef|1234567|xxx|yyy|zzz|\bfoo\b|\bbar\b)/i;
 
 /** The same character five or more times running, e.g. `sk_live_aaaaaaaa`. */
 const REPEATED_RUN = /(.)\1{4,}/;
@@ -103,6 +103,24 @@ function isCommentedOut(source: string, index: number): boolean {
   );
   const segment = before.slice(start + 1).trimStart();
   return /^(#|\/\/|\*|--)/.test(segment);
+}
+
+/**
+ * True when the offset sits inside a string literal on its own line. Security
+ * tooling, docs and rule libraries quote the very patterns we search for, and
+ * a quoted mention is prose, not configuration.
+ */
+function isQuoted(source: string, index: number): boolean {
+  const lineStart = source.lastIndexOf('\n', index - 1) + 1;
+  const before = source.slice(lineStart, index);
+  for (const quote of ['"', "'", '`']) {
+    let count = 0;
+    for (let i = 0; i < before.length; i++) {
+      if (before[i] === quote && before[i - 1] !== '\\') count++;
+    }
+    if (count % 2 === 1) return true;
+  }
+  return false;
 }
 
 export const secretsScanner: Scanner = {
@@ -217,6 +235,76 @@ export const secretsScanner: Scanner = {
           owasp: 'A04:2025 - Cryptographic Failures',
           meta: { variable: varName },
         });
+      }
+
+      // Any server-side env var read in a client component is inlined into the
+      // bundle as `undefined` at best, and as its value at worst. The named
+      // secrets below are the critical case; this is the general one.
+      if (clientComponent && isScript(file)) {
+        const anyEnv = /process\.env\.(?!NEXT_PUBLIC_)([A-Z][A-Z0-9_]{2,})/g;
+        const reported = new Set<string>();
+        let g: RegExpExecArray | null;
+        while ((g = anyEnv.exec(source)) !== null) {
+          const varName = g[1]!;
+          if (varName === 'NODE_ENV' || varName === 'VERCEL_ENV' || varName === 'NODE_OPTIONS') continue;
+          if (SECRETY_NAME.test(varName)) continue; // covered at critical by CTS033
+          if (reported.has(varName)) continue;
+          reported.add(varName);
+          const line = lineAt(source, g.index);
+          if (isCommentedOut(source, g.index)) continue;
+          if (suppress.suppressed(line, 'CTS040')) continue;
+          result.findings.push({
+            id: 'CTS040',
+            severity: fixtureFile ? 'low' : 'high',
+            title: 'Client component reads a server-side environment variable',
+            detail:
+              `${relPath} is a client component and reads \`process.env.${varName}\`. Next.js only ` +
+              'inlines `NEXT_PUBLIC_*` variables into the browser bundle, so this is `undefined` at ' +
+              'runtime — the logic depending on it is silently not running, and if the prefix is ever ' +
+              'added to "fix" that, the value ships to every visitor.',
+            fix:
+              `Read \`${varName}\` in a Server Component, Server Action or Route Handler and pass the ` +
+              'result down as a prop. Add the `NEXT_PUBLIC_` prefix only if the value is genuinely public.',
+            file: relPath,
+            line,
+            snippet: snippetAt(source, line),
+            cwe: 'CWE-668: Exposure of Resource to Wrong Sphere',
+            owasp: 'A04:2025 - Cryptographic Failures',
+            meta: { variable: varName },
+          });
+        }
+      }
+
+      // An AI SDK client told to run in the browser ships the API key with it.
+      if (isScript(file)) {
+        const browserFlag = /dangerouslyAllowBrowser\s*:\s*true/.exec(source);
+        if (
+          browserFlag &&
+          !isCommentedOut(source, browserFlag.index) &&
+          !isQuoted(source, browserFlag.index)
+        ) {
+          const line = lineAt(source, browserFlag.index);
+          if (!suppress.suppressed(line, 'CTS045')) {
+            result.findings.push({
+              id: 'CTS045',
+              severity: fixtureFile ? 'low' : 'critical',
+              title: 'AI client configured to run in the browser',
+              detail:
+                `${relPath} sets \`dangerouslyAllowBrowser: true\`. That flag exists purely to disable ` +
+                'the SDK\u2019s own guard against shipping your API key to the client. Every visitor can ' +
+                'read the key out of the bundle and spend your quota.',
+              fix:
+                'Call the model from a Route Handler or Server Action and have the browser call that ' +
+                'instead. If you need streaming, proxy the stream through your own endpoint.',
+              file: relPath,
+              line,
+              snippet: snippetAt(source, line),
+              cwe: 'CWE-522: Insufficiently Protected Credentials',
+              owasp: 'A04:2025 - Cryptographic Failures',
+              meta: { flag: 'dangerouslyAllowBrowser' },
+            });
+          }
+        }
       }
 
       // A client component reaching for a service-role client is always wrong.

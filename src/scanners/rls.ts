@@ -29,6 +29,7 @@ interface Policy {
   table: string;
   command: string;
   roles: string[];
+  permissive: boolean;
   using: string | null;
   withCheck: string | null;
   file: string;
@@ -81,6 +82,8 @@ export const rlsScanner: Scanner = {
     const result = emptyResult();
     const tables = new Map<string, Table>();
     const policies: Policy[] = [];
+    const definerFunctions = new Set<string>();
+    const publicBuckets: { id: string; file: string; line: number }[] = [];
     const findings: Finding[] = [];
     const suppressors = new Map<string, Suppressions>();
     const sources = new Map<string, string>();
@@ -154,6 +157,7 @@ export const rlsScanner: Scanner = {
             table: normaliseTable(policy[2]!),
             command: cmd,
             roles,
+            permissive: !/\bas\s+restrictive\b/i.test(flat),
             using: clauseAfter(text, /\busing\s*(?=\()/i),
             withCheck: clauseAfter(text, /\bwith\s+check\s*(?=\()/i),
             file: relPath,
@@ -182,7 +186,32 @@ export const rlsScanner: Scanner = {
           const grantees = grant[3]!.split(',').map((r) => r.trim().replace(/^"(.*)"$/, '$1').toLowerCase());
           const writes = /\ball\b|\binsert\b|\bupdate\b|\bdelete\b|\btruncate\b/.test(privs);
           const target = grant[2]!.toLowerCase();
-          if (writes && grantees.some((g) => UNAUTHENTICATED_ROLES.has(g)) && !target.includes('function') && !target.includes('sequence')) {
+          if (target.includes('function') && /\bexecute\b|\ball\b/.test(privs)) {
+            const fnName = new RegExp(`function\\s+(${QUALIFIED_NAME})`, 'i').exec(grant[2]!)?.[1];
+            const normalised = fnName ? normaliseTable(fnName) : null;
+            if (normalised && definerFunctions.has(normalised) && grantees.some((g) => UNAUTHENTICATED_ROLES.has(g))) {
+              findings.push({
+                id: 'CTS052',
+                severity: 'high',
+                title: 'SECURITY DEFINER function is callable without signing in',
+                detail:
+                  `\`${normalised}\` runs with its owner's privileges and EXECUTE is granted to ` +
+                  `${grantees.join(', ')}. Anyone holding the public anon key can call it, and whatever ` +
+                  'it does happens with the definer’s rights rather than theirs — Row Level Security ' +
+                  'included.',
+                fix:
+                  `REVOKE EXECUTE ON FUNCTION ${normalised} FROM anon, public;\n` +
+                  'Grant it to `authenticated` only, and check the caller inside the function body.',
+                file: relPath,
+                line: stmt.line,
+                cwe: 'CWE-269: Improper Privilege Management',
+                owasp: 'A01:2025 - Broken Access Control',
+                meta: { function: normalised, grantees },
+              });
+            }
+            continue;
+          }
+          if (writes && grantees.some((g) => UNAUTHENTICATED_ROLES.has(g)) && !target.includes('sequence')) {
             findings.push({
               id: 'CTS017',
               severity: 'critical',
@@ -202,10 +231,20 @@ export const rlsScanner: Scanner = {
           continue;
         }
 
+        // Supabase Storage: a bucket marked public serves every object in it
+        // to unauthenticated callers over a predictable URL.
+        if (/^insert\s+into\s+storage\s*\.\s*buckets\b/i.test(flat) && /\btrue\b/i.test(flat)) {
+          const id = /values\s*\(\s*'([^']+)'/i.exec(flat)?.[1] ?? 'unknown';
+          publicBuckets.push({ id, file: relPath, line: stmt.line });
+          continue;
+        }
+
         // SECURITY DEFINER functions without a pinned search_path.
         if (/^create\s+(or\s+replace\s+)?function/i.test(flat) && /security\s+definer/i.test(flat)) {
+          const declared = new RegExp(`^create\\s+(?:or\\s+replace\\s+)?function\\s+(${QUALIFIED_NAME})`, 'i').exec(flat)?.[1];
+          if (declared) definerFunctions.add(normaliseTable(declared));
           if (!/set\s+search_path/i.test(flat)) {
-            const fname = new RegExp(`^create\\s+(?:or\\s+replace\\s+)?function\\s+(${QUALIFIED_NAME})`, 'i').exec(flat)?.[1] ?? 'function';
+            const fname = declared ?? 'function';
             findings.push({
               id: 'CTS015',
               severity: 'medium',
@@ -225,9 +264,61 @@ export const rlsScanner: Scanner = {
         }
 
         // Views bypass the RLS of their base tables unless security_invoker is set.
-        const view = new RegExp(`^create\\s+(?:or\\s+replace\\s+)?view\\s+(${QUALIFIED_NAME})`, 'i').exec(flat);
+        const view = new RegExp(
+          `^create\\s+(?:or\\s+replace\\s+)?(materialized\\s+)?view\\s+(?:if\\s+not\\s+exists\\s+)?(${QUALIFIED_NAME})`,
+          'i',
+        ).exec(flat);
         if (view) {
-          const name = normaliseTable(view[1]!);
+          const materialized = Boolean(view[1]);
+          const name = normaliseTable(view[2]!);
+
+          // A view over auth.users republishes every account's email and, on
+          // older projects, the encrypted password, through the REST API.
+          if (name.startsWith('public.') && /\bauth\s*\.\s*users\b/i.test(flat)) {
+            findings.push({
+              id: 'CTS019',
+              severity: 'critical',
+              title: 'auth.users is republished through the public schema',
+              detail:
+                `${materialized ? 'Materialized view' : 'View'} \`${name}\` selects from \`auth.users\` ` +
+                'and lives in the schema PostgREST exposes. Supabase keeps that table out of the API ' +
+                'precisely because it holds every user’s email address, phone number and auth metadata; ' +
+                'a view over it hands all of that back to the API.',
+              fix:
+                `Drop the view, or move it to a private schema and expose only the columns you need ` +
+                'through a `security_invoker` view over your own `profiles` table.',
+              file: relPath,
+              line: stmt.line,
+              cwe: 'CWE-200: Exposure of Sensitive Information to an Unauthorized Actor',
+              owasp: 'A01:2025 - Broken Access Control',
+              meta: { view: name, materialized },
+            });
+            continue;
+          }
+
+          // Materialized views never consult the RLS of their base tables.
+          if (name.startsWith('public.') && materialized) {
+            findings.push({
+              id: 'CTS016',
+              severity: 'high',
+              title: 'Materialized view is exposed over the Data API',
+              detail:
+                `Materialized view \`${name}\` is in the public schema. Materialized views hold their ` +
+                'own copy of the data and never evaluate the Row Level Security policies of the tables ' +
+                'they were built from, so every row in the snapshot is readable by anyone who can reach ' +
+                'the API.',
+              fix:
+                'Move the materialized view into a private schema and expose a filtered, ' +
+                '`security_invoker` view over it, or revoke SELECT from `anon` and `authenticated`.',
+              file: relPath,
+              line: stmt.line,
+              cwe: 'CWE-863: Incorrect Authorization',
+              owasp: 'A01:2025 - Broken Access Control',
+              meta: { view: name, materialized: true },
+            });
+            continue;
+          }
+
           if (name.startsWith('public.') && !/security_invoker\s*=\s*(on|true)/i.test(flat)) {
             findings.push({
               id: 'CTS016',
@@ -406,6 +497,82 @@ export const rlsScanner: Scanner = {
           });
         }
       }
+    }
+
+    // Permissive policies are OR-ed together, so a second broad policy silently
+    // widens whatever the first one narrowed (splinter 0006).
+    const overlap = new Map<string, Policy[]>();
+    for (const p of policies) {
+      if (!p.permissive) continue;
+      const commands = p.command === 'ALL' ? ['SELECT', 'INSERT', 'UPDATE', 'DELETE'] : [p.command];
+      for (const cmd of commands) {
+        for (const role of p.roles) {
+          const key = `${p.table}|${cmd}|${role}`;
+          const list = overlap.get(key) ?? [];
+          list.push(p);
+          overlap.set(key, list);
+        }
+      }
+    }
+    const alreadyReported = new Set<string>();
+    for (const [key, group] of overlap) {
+      if (group.length < 2) continue;
+      const [table, cmd, role] = key.split('|');
+      const names = [...new Set(group.map((p) => p.name))];
+      if (names.length < 2) continue;
+      const dedupe = `${table}|${cmd}|${role}|${names.join(',')}`;
+      if (alreadyReported.has(dedupe)) continue;
+      alreadyReported.add(dedupe);
+      findings.push({
+        id: 'CTS050',
+        severity: 'medium',
+        title: 'Overlapping permissive policies widen access',
+        detail:
+          `\`${table}\` has ${names.length} permissive policies covering \`${cmd}\` for \`${role}\` ` +
+          `(${names.map((n) => `\`${n}\``).join(', ')}). PostgreSQL ORs permissive policies together, ` +
+          'so a row is visible if *any* of them allows it — adding a policy can only ever widen access, ' +
+          'never narrow it. A carefully scoped policy is defeated by a broad one sitting beside it.',
+        fix:
+          'Merge them into a single policy whose predicate expresses the whole rule, or make the ' +
+          'narrowing one `AS RESTRICTIVE` so it is AND-ed instead of OR-ed.',
+        file: group[0]!.file,
+        line: group[0]!.line,
+        cwe: 'CWE-863: Incorrect Authorization',
+        owasp: 'A01:2025 - Broken Access Control',
+        meta: { table, command: cmd, role, policies: names },
+      });
+    }
+
+    // Supabase Storage listing: a broad SELECT policy on storage.objects lets a
+    // caller enumerate every file in every bucket, public or not (splinter 0025).
+    for (const p of policies) {
+      if (p.table !== 'storage.objects') continue;
+      if (p.command !== 'SELECT' && p.command !== 'ALL') continue;
+      if (!p.roles.some((r) => UNAUTHENTICATED_ROLES.has(r))) continue;
+      const predicate = `${p.using ?? ''} ${p.withCheck ?? ''}`;
+      const constrained = /bucket_id|owner|auth\.uid\(\)|name\s*(like|~)/i.test(predicate);
+      if (constrained && !isAlwaysTrue(p.using)) continue;
+      findings.push({
+        id: 'CTS051',
+        severity: 'high',
+        title: 'Storage policy allows listing every object in every bucket',
+        detail:
+          `Policy \`${p.name}\` grants unauthenticated SELECT on \`storage.objects\` without ` +
+          'constraining `bucket_id` or `owner`. Reading an object needs only its URL, but listing is ' +
+          'what turns "unguessable filename" into "here is the index" — a caller can enumerate every ' +
+          'upload in the project, including buckets that are not public.' +
+          (publicBuckets.length
+            ? ` ${publicBuckets.length} public bucket(s) are also declared (${publicBuckets.map((b) => `\`${b.id}\``).join(', ')}).`
+            : ''),
+        fix:
+          "Scope the policy to one bucket and to the caller, e.g. `bucket_id = 'avatars' AND owner = " +
+          '(select auth.uid())`, and keep private buckets out of any `anon` policy entirely.',
+        file: p.file,
+        line: p.line,
+        cwe: 'CWE-200: Exposure of Sensitive Information to an Unauthorized Actor',
+        owasp: 'A01:2025 - Broken Access Control',
+        meta: { policy: p.name, publicBuckets: publicBuckets.map((b) => b.id) },
+      });
     }
 
     // Apply inline suppressions now that every finding has a location.
