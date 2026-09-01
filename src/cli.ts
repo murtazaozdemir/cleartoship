@@ -6,7 +6,14 @@ import { dirname, join } from 'node:path';
 import pc from 'picocolors';
 import { scan } from './scan.js';
 import { banner } from './banner.js';
-import { renderTerminal, renderJson, renderSarif, renderFixPrompt, renderBadge } from './report.js';
+import {
+  renderTerminal,
+  renderJson,
+  renderSarif,
+  renderFixPrompt,
+  renderBadge,
+  renderMarkdown,
+} from './report.js';
 import { SEVERITY_ORDER } from './types.js';
 import type { Severity } from './types.js';
 
@@ -44,6 +51,7 @@ program
   .option('--sarif', 'emit SARIF 2.1.0 (upload to GitHub code scanning)')
   .option('--fix-prompt', 'emit a ready-to-paste prompt for Cursor / Claude Code')
   .option('--badge', 'print the markdown status badge for your README')
+  .option('--markdown', 'emit a markdown report (for PR comments / job summaries)')
   .option('-o, --output <file>', 'write the chosen output to a file instead of stdout')
   .option('--offline', 'skip registry lookups (no network)')
   .option('--no-community', 'run only ClearToShip rules, skipping the vendored community ruleset')
@@ -53,7 +61,9 @@ program
   .option('--quiet', 'only print findings, no passed checks')
   .option('--verbose', 'extra diagnostic output')
   .action(async (paths: string[], opts) => {
-    const machineReadable = Boolean(opts.json || opts.sarif || opts.fixPrompt || opts.badge);
+    const machineReadable = Boolean(
+      opts.json || opts.sarif || opts.fixPrompt || opts.badge || opts.markdown,
+    );
     const interactive = !machineReadable && !opts.output;
 
     if (interactive && opts.banner !== false) {
@@ -91,6 +101,7 @@ program
     else if (opts.sarif) output = renderSarif(result, version);
     else if (opts.fixPrompt) output = renderFixPrompt(result);
     else if (opts.badge) output = renderBadge(result);
+    else if (opts.markdown) output = renderMarkdown(result);
     else output = renderTerminal(result, { showPassed: !opts.quiet });
 
     if (opts.output) {

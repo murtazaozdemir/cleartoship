@@ -1,0 +1,23 @@
+# Copy to .github/workflows/security.yml in your own repository.
+name: ClearToShip
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write   # for the summary comment
+  security-events: write # for the optional SARIF upload
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: murtazaozdemir/cleartoship@v0.3.0
+        with:
+          fail-on: critical   # block the PR only on criticals
+          comment: true        # post a summary comment on the PR
+          sarif: true          # also upload to the Security tab

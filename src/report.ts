@@ -248,6 +248,103 @@ export function renderFixPrompt(scan: FullScan): string {
   return lines.join('\n');
 }
 
+const MD_SEVERITY: Record<Severity, string> = {
+  critical: '🔴 Critical',
+  high: '🟠 High',
+  medium: '🟡 Medium',
+  low: '🔵 Low',
+  info: '⚪ Info',
+};
+
+/**
+ * Markdown for a GitHub pull-request comment or an Actions job summary. Kept
+ * compact: the verdict and counts up top, findings grouped by severity in a
+ * collapsible block, so a passing PR shows one green line and a failing one puts
+ * the blocking issues first without burying the diff.
+ */
+export function renderMarkdown(scan: FullScan): string {
+  const out: string[] = [];
+  const total = scan.findings.length;
+  const verdict =
+    scan.counts.critical > 0 ? 'hold' : scan.counts.high > 0 ? 'conditional' : 'clear';
+
+  const heading =
+    verdict === 'hold'
+      ? '## 🔴 ClearToShip — hold before shipping'
+      : verdict === 'conditional'
+        ? '## 🟡 ClearToShip — clear, with high-severity gaps'
+        : total > 0
+          ? '## 🟢 ClearToShip — clear to ship'
+          : '## 🟢 ClearToShip — clear to ship, all checks passed';
+  out.push(heading);
+  out.push('');
+
+  const counts = (['critical', 'high', 'medium', 'low'] as Severity[])
+    .filter((sev) => scan.counts[sev] > 0)
+    .map((sev) => `**${scan.counts[sev]}** ${sev}`)
+    .join(' · ');
+  out.push(
+    `\`${scan.framework}\` · ${scan.fileCount} files · ${(scan.durationMs / 1000).toFixed(1)}s` +
+      (counts ? ` · ${counts}` : ''),
+  );
+  out.push('');
+
+  if (total === 0) {
+    out.push('No security findings. ✅');
+    out.push('');
+    out.push('<sub>Static pre-flight for AI-built apps · [cleartoship.app](https://cleartoship.app)</sub>');
+    return out.join('\n');
+  }
+
+  const bySeverity = ['critical', 'high', 'medium', 'low'] as const;
+  const blocking = scan.findings.filter((f) => f.severity === 'critical' || f.severity === 'high');
+  const rest = scan.findings.filter((f) => f.severity === 'medium' || f.severity === 'low');
+
+  const table = (findings: Finding[]) => {
+    const rows = ['| Severity | Rule | Finding | Location |', '| --- | --- | --- | --- |'];
+    for (const f of findings) {
+      const loc = f.file ? `\`${f.file}${f.line ? `:${f.line}` : ''}\`` : '—';
+      const title = f.title.replace(/\|/g, '\\|');
+      rows.push(`| ${MD_SEVERITY[f.severity]} | \`${f.id}\` | ${title} | ${loc} |`);
+    }
+    return rows.join('\n');
+  };
+
+  if (blocking.length > 0) {
+    out.push(table(blocking));
+    out.push('');
+  }
+  if (rest.length > 0) {
+    out.push('<details><summary>' + `${rest.length} lower-severity finding${rest.length === 1 ? '' : 's'}` + '</summary>');
+    out.push('');
+    out.push(table(rest));
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+
+  // The single most severe finding gets its fix shown inline; the rest are a
+  // command away, so the comment stays scannable.
+  const worst = scan.findings[0];
+  if (worst) {
+    out.push(`<details><summary>How to fix <code>${worst.id}</code> — ${worst.title}</summary>`);
+    out.push('');
+    out.push(worst.detail);
+    out.push('');
+    out.push('```');
+    out.push(worst.fix);
+    out.push('```');
+    out.push('');
+    out.push('</details>');
+    out.push('');
+  }
+
+  out.push('Run `npx cleartoship --fix-prompt` for a prompt that fixes all of these in Cursor or Claude Code.');
+  out.push('');
+  out.push('<sub>Static pre-flight for AI-built apps · [cleartoship.app](https://cleartoship.app)</sub>');
+  return out.join('\n');
+}
+
 export function renderBadge(scan: FullScan): string {
   const verdict =
     scan.counts.critical > 0 ? 'hold' : scan.counts.high > 0 ? 'conditional' : 'clear';

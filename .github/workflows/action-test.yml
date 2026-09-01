@@ -1,0 +1,45 @@
+name: Action integration test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # The vulnerable fixture must make the action fail and surface findings.
+  detects-vulnerable:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: scan
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: test/fixtures/vulnerable-app
+          offline: 'true'
+          comment: 'false'
+          version: local
+      - name: Assert it flagged the fixture and failed
+        run: |
+          test "${{ steps.scan.outcome }}" = "failure" || { echo "expected the gate to fail"; exit 1; }
+          test "${{ steps.scan.outputs.verdict }}" = "hold" || { echo "expected verdict=hold, got ${{ steps.scan.outputs.verdict }}"; exit 1; }
+          test "${{ steps.scan.outputs.critical }}" -gt 0 || { echo "expected criticals"; exit 1; }
+          echo "vulnerable fixture: verdict=${{ steps.scan.outputs.verdict }} critical=${{ steps.scan.outputs.critical }}"
+
+  # The clean fixture must pass with no findings.
+  passes-clean:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: scan
+        uses: ./
+        with:
+          working-directory: test/fixtures/clean-app
+          offline: 'true'
+          comment: 'false'
+          version: local
+      - name: Assert it is clear
+        run: |
+          test "${{ steps.scan.outputs.verdict }}" = "clear" || { echo "expected verdict=clear"; exit 1; }
+          test "${{ steps.scan.outputs.total }}" = "0" || { echo "expected zero findings, got ${{ steps.scan.outputs.total }}"; exit 1; }
+          echo "clean fixture: clear to ship"

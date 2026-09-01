@@ -107,6 +107,7 @@ npx cleartoship --sarif -o results.sarif # GitHub code scanning
 npx cleartoship --fail-on high           # stricter CI gate (default: critical)
 npx cleartoship --ignore CTS004,CTS022   # skip rules
 npx cleartoship --no-community           # ClearToShip rules only
+npx cleartoship --markdown               # markdown report (PR comments / summaries)
 ```
 
 Suppress a single finding inline:
@@ -122,22 +123,50 @@ room to be written out.
 
 ## Continuous integration
 
+### GitHub Action (recommended)
+
+Posts a summary comment on every pull request, blocks the merge on critical
+findings, and optionally uploads to the Security tab. Copy
+[`examples/security.yml`](examples/security.yml) into `.github/workflows/`:
+
 ```yaml
-# .github/workflows/security.yml
 name: ClearToShip
 on: [pull_request]
-
+permissions:
+  contents: read
+  pull-requests: write
 jobs:
   preflight:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+      - uses: murtazaozdemir/cleartoship@v0.3.0
+        with:
+          fail-on: critical
+          comment: true
+```
+
+| Input | Default | Purpose |
+| --- | --- | --- |
+| `paths` | *(whole project)* | Files or directories to scan |
+| `fail-on` | `critical` | Fail the job at or above this severity (`critical`/`high`/`medium`/`low`/`none`) |
+| `comment` | `true` | Post/update a sticky summary comment on the PR |
+| `sarif` | `false` | Upload results to GitHub code scanning |
+| `offline` | `false` | Skip registry and OSV lookups |
+| `working-directory` | `.` | Directory to scan from |
+
+Outputs `verdict` (`clear`/`conditional`/`hold`), `critical`, `high` and `total`
+for use in later steps. The comment is *sticky* — re-runs edit the same comment
+instead of piling up. Until the npm package is published, the action builds
+itself from its own checkout, so `uses: …@ref` works immediately.
+
+### Plain CLI
+
+```yaml
       - run: npx cleartoship --fail-on=critical
 ```
 
-To feed findings into GitHub's Security tab instead of failing the build:
+To feed findings into GitHub's Security tab without the Action:
 
 ```yaml
       - run: npx cleartoship --sarif -o results.sarif --fail-on=none
@@ -145,7 +174,7 @@ To feed findings into GitHub's Security tab instead of failing the build:
         with: { sarif_file: results.sarif }
 ```
 
-## How it works
+## How it works## How it works
 
 Four scanners, all static — nothing is uploaded and no database is contacted.
 

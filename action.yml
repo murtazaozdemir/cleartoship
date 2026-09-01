@@ -1,0 +1,154 @@
+name: ClearToShip
+description: Pre-flight security check for AI-built & vibe-coded apps. Blocks PRs on missing Server Action auth, Supabase RLS holes, hallucinated packages and leaked keys.
+author: ClearToShip
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  paths:
+    description: Files or directories to scan, space-separated. Defaults to the whole project.
+    required: false
+    default: ''
+  fail-on:
+    description: Fail the job at or above this severity (critical, high, medium, low, none).
+    required: false
+    default: critical
+  comment:
+    description: Post (and update) a summary comment on the pull request. Requires pull-requests write permission.
+    required: false
+    default: 'true'
+  sarif:
+    description: Write results.sarif for upload to GitHub code scanning.
+    required: false
+    default: 'false'
+  offline:
+    description: Skip registry and OSV lookups.
+    required: false
+    default: 'false'
+  version:
+    description: Version of the cleartoship npm package to run.
+    required: false
+    default: latest
+  working-directory:
+    description: Directory to run the scan from.
+    required: false
+    default: '.'
+  github-token:
+    description: Token used to post the PR comment.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  verdict:
+    description: One of clear, conditional, or hold.
+    value: ${{ steps.scan.outputs.verdict }}
+  critical:
+    description: Number of critical findings.
+    value: ${{ steps.scan.outputs.critical }}
+  high:
+    description: Number of high findings.
+    value: ${{ steps.scan.outputs.high }}
+  total:
+    description: Total number of findings.
+    value: ${{ steps.scan.outputs.total }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve ClearToShip
+      id: resolve
+      shell: bash
+      run: |
+        # Prefer the published npm package. If it cannot be resolved — which is
+        # the case before the first publish, or when a pinned version is not on
+        # the registry — fall back to building from this action's own checkout,
+        # so `uses: <owner>/cleartoship@ref` works with no npm dependency.
+        ver="${{ inputs.version }}"
+        if [ "$ver" != "local" ] && npm view "cleartoship@${ver}" version >/dev/null 2>&1; then
+          echo "cmd=npx --yes cleartoship@${ver}" >> "$GITHUB_OUTPUT"
+          echo "Using published cleartoship@${ver}"
+        else
+          echo "Published package not found; building from the action checkout."
+          ( cd "$GITHUB_ACTION_PATH" && npm ci --silent && npm run build --silent )
+          echo "cmd=node ${GITHUB_ACTION_PATH}/dist/cli.js" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Run ClearToShip
+      id: scan
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -o pipefail
+        CTS="${{ steps.resolve.outputs.cmd }}"
+        args=()
+        [ -n "${{ inputs.paths }}" ] && args+=(${{ inputs.paths }})
+        [ "${{ inputs.offline }}" = "true" ] && args+=(--offline)
+
+        # The gate is applied at the end so the report and comment are produced
+        # regardless of pass/fail; --fail-on=none keeps this step from aborting early.
+        $CTS "${args[@]}" --json --fail-on=none > cleartoship.json
+        $CTS "${args[@]}" --markdown --fail-on=none > cleartoship.md || true
+        if [ "${{ inputs.sarif }}" = "true" ]; then
+          $CTS "${args[@]}" --sarif --fail-on=none > results.sarif || true
+        fi
+
+        node -e '
+          const r = require("./cleartoship.json");
+          const out = process.env.GITHUB_OUTPUT;
+          const fs = require("fs");
+          fs.appendFileSync(out, `verdict=${r.verdict}\n`);
+          fs.appendFileSync(out, `critical=${r.counts.critical}\n`);
+          fs.appendFileSync(out, `high=${r.counts.high}\n`);
+          fs.appendFileSync(out, `total=${r.findings.length}\n`);
+        '
+
+        # Job summary — always shown on the run.
+        cat cleartoship.md >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Comment on pull request
+      if: ${{ inputs.comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR: ${{ github.event.pull_request.number }}
+      run: |
+        # A sticky comment: find a previous ClearToShip comment and edit it, so
+        # re-runs update in place instead of piling up.
+        marker="<!-- cleartoship -->"
+        printf '%s\n\n' "$marker" > body.md
+        cat cleartoship.md >> body.md
+
+        id=$(gh api "repos/${{ github.repository }}/issues/${PR}/comments" \
+              --jq "map(select(.body | contains(\"$marker\"))) | .[0].id // empty" 2>/dev/null || true)
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/${{ github.repository }}/issues/comments/${id}" -F body=@body.md >/dev/null
+        else
+          gh api -X POST "repos/${{ github.repository }}/issues/${PR}/comments" -F body=@body.md >/dev/null
+        fi
+
+    - name: Upload SARIF
+      if: ${{ inputs.sarif == 'true' && always() }}
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.working-directory }}/results.sarif
+
+    - name: Apply severity gate
+      shell: bash
+      run: |
+        gate="${{ inputs.fail-on }}"
+        [ "$gate" = "none" ] && exit 0
+        declare -A rank=( [critical]=4 [high]=3 [medium]=2 [low]=1 )
+        floor=${rank[$gate]:-4}
+        crit=${{ steps.scan.outputs.critical }}
+        high=${{ steps.scan.outputs.high }}
+        # Only critical and high are wired as outputs; medium/low never block by default.
+        blocking=0
+        [ "$floor" -le 4 ] && blocking=$((blocking + crit))
+        [ "$floor" -le 3 ] && blocking=$((blocking + high))
+        if [ "$blocking" -gt 0 ]; then
+          echo "::error::ClearToShip found $blocking finding(s) at or above '$gate'."
+          exit 1
+        fi
+        echo "ClearToShip: clear to ship at '$gate'."

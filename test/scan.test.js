@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -405,4 +406,38 @@ test('yarn.lock is parsed without a backtracking-prone regex', async () => {
   // A catastrophic-backtracking parser would not return promptly.
   assert.ok(Date.now() - started < 5000);
   assert.ok(Array.isArray(result.findings));
+});
+
+test('markdown report is well-formed for both verdicts', async () => {
+  const { renderMarkdown } = await import('../dist/index.js');
+
+  const vuln = renderMarkdown(await scan({ root: VULNERABLE, offline: true }));
+  assert.match(vuln, /## 🔴 ClearToShip — hold before shipping/);
+  assert.match(vuln, /\| Severity \| Rule \| Finding \| Location \|/);
+  assert.match(vuln, /`CTS001`/);
+  assert.match(vuln, /<details><summary>/, 'lower-severity findings should be collapsible');
+  // A GitHub comment must not exceed 65536 bytes.
+  assert.ok(Buffer.byteLength(vuln) < 65536, 'comment body must fit GitHub limit');
+
+  const clean = renderMarkdown(await scan({ root: CLEAN, offline: true }));
+  assert.match(clean, /clear to ship/);
+  assert.match(clean, /No security findings/);
+  assert.ok(!clean.includes('| Severity |'), 'no table when there is nothing to report');
+});
+
+test('the shipped GitHub Action is structurally sound', () => {
+  const yml = readFileSync(join(here, '..', 'action.yml'), 'utf8');
+  assert.ok(!/\t/.test(yml), 'YAML must not contain tabs');
+  assert.match(yml, /using: composite/);
+  // The two runner paths the action can take.
+  assert.match(yml, /npx --yes cleartoship@/, 'should prefer the published package');
+  assert.match(yml, /node \$\{GITHUB_ACTION_PATH\}\/dist\/cli\.js/, 'should fall back to a local build');
+  // Balanced GitHub expression braces.
+  const opens = (yml.match(/\$\{\{/g) || []).length;
+  const closes = (yml.match(/\}\}/g) || []).length;
+  assert.equal(opens, closes, 'unbalanced ${{ }} expressions');
+  // Every declared output must be produced by the scan step.
+  for (const out of ['verdict', 'critical', 'high', 'total']) {
+    assert.match(yml, new RegExp(`${out}=`), `output ${out} must be written`);
+  }
 });
