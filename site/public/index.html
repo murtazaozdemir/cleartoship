@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClearToShip — pre-flight security for AI-built apps</title>
+<meta name="description" content="The 30-second pre-launch security check for AI-built & vibe-coded apps. Catches missing Server Action auth, Supabase RLS holes, hallucinated npm packages and leaked keys before you deploy.">
+<meta property="og:title" content="ClearToShip">
+<meta property="og:description" content="Pre-flight security check for AI-built & vibe-coded apps. npx cleartoship.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://cleartoship.app">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+<style>
+  :root {
+    --bg: #0a0d12;
+    --bg-soft: #10151c;
+    --panel: #121924;
+    --border: #1f2a38;
+    --border-soft: #18202c;
+    --ink: #e8edf3;
+    --ink-dim: #9aa7b6;
+    --ink-faint: #61707f;
+    --green: #34d399;
+    --green-deep: #10b981;
+    --red: #f87171;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --accent: #34d399;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    --maxw: 1080px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(60rem 40rem at 75% -10%, rgba(52, 211, 153, 0.07), transparent 60%),
+      radial-gradient(48rem 32rem at 5% 8%, rgba(96, 165, 250, 0.05), transparent 55%);
+    background-repeat: no-repeat;
+  }
+  a { color: var(--green); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 24px; }
+  code, kbd, pre { font-family: var(--mono); }
+
+  /* ---- header ---- */
+  header {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(10px);
+    background: rgba(10, 13, 18, 0.72);
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .nav { display: flex; align-items: center; justify-content: space-between; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 9px; font-weight: 650; letter-spacing: -0.01em; font-size: 15px; }
+  .brand .glyph { font-size: 18px; }
+  .brand b { color: var(--ink); }
+  .nav-links { display: flex; align-items: center; gap: 22px; font-size: 14px; }
+  .nav-links a { color: var(--ink-dim); }
+  .nav-links a:hover { color: var(--ink); text-decoration: none; }
+  .nav-cta {
+    color: var(--bg) !important; background: var(--green);
+    padding: 7px 14px; border-radius: 7px; font-weight: 600;
+  }
+  .nav-cta:hover { background: var(--green-deep); text-decoration: none; }
+  @media (max-width: 640px) { .nav-links .hide-sm { display: none; } }
+
+  /* ---- hero ---- */
+  .hero { padding: 72px 0 40px; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 12.5px; color: var(--green);
+    border: 1px solid var(--border); background: var(--bg-soft);
+    padding: 5px 12px; border-radius: 999px; margin-bottom: 22px;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+  h1 {
+    font-size: clamp(34px, 5.4vw, 58px); line-height: 1.04;
+    letter-spacing: -0.03em; margin: 0 0 20px; font-weight: 700;
+  }
+  h1 .accent { color: var(--green); }
+  .lede { font-size: clamp(17px, 2.1vw, 20px); color: var(--ink-dim); max-width: 620px; margin: 0 0 30px; }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .cmd {
+    display: inline-flex; align-items: center; gap: 12px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 13px 16px; font-family: var(--mono); font-size: 15px;
+  }
+  .cmd .prompt { color: var(--ink-faint); }
+  .cmd .copy {
+    cursor: pointer; border: 0; background: transparent; color: var(--ink-faint);
+    font-family: var(--mono); font-size: 12px; padding: 2px 6px; border-radius: 5px;
+  }
+  .cmd .copy:hover { color: var(--green); background: var(--bg-soft); }
+  .btn-ghost {
+    display: inline-flex; align-items: center; gap: 8px;
+    border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px;
+    color: var(--ink); font-size: 15px; font-weight: 550;
+  }
+  .btn-ghost:hover { border-color: var(--ink-faint); text-decoration: none; }
+
+  /* ---- terminal ---- */
+  .term {
+    margin-top: 44px; border: 1px solid var(--border); border-radius: 12px;
+    background: linear-gradient(180deg, #0d1219, #0b0f15);
+    overflow: hidden; box-shadow: 0 24px 60px -20px rgba(0,0,0,0.6);
+  }
+  .term-bar {
+    display: flex; align-items: center; gap: 8px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border-soft); background: var(--bg-soft);
+  }
+  .term-bar .b { width: 11px; height: 11px; border-radius: 50%; }
+  .term-bar .b1 { background: #ff5f57; } .term-bar .b2 { background: #febc2e; } .term-bar .b3 { background: #28c840; }
+  .term-bar .title { margin-left: 8px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+  .term pre {
+    margin: 0; padding: 20px 22px; font-size: 13px; line-height: 1.7;
+    overflow-x: auto; color: var(--ink-dim); font-family: var(--mono);
+  }
+  .term .c-dim { color: var(--ink-faint); }
+  .term .c-green { color: var(--green); }
+  .term .c-red { color: var(--red); }
+  .term .c-amber { color: var(--amber); }
+  .term .c-ink { color: var(--ink); }
+  .term .c-cyan { color: var(--blue); }
+  .reveal-line { opacity: 0; animation: fadeUp .34s ease forwards; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .reveal-line { opacity: 1; animation: none; } }
+
+  /* ---- sections ---- */
+  section { padding: 64px 0; border-top: 1px solid var(--border-soft); }
+  .kicker { font-family: var(--mono); font-size: 12.5px; color: var(--green); letter-spacing: 0.04em; text-transform: uppercase; margin: 0 0 12px; }
+  h2 { font-size: clamp(24px, 3.4vw, 34px); letter-spacing: -0.02em; margin: 0 0 14px; font-weight: 680; }
+  .section-lede { color: var(--ink-dim); max-width: 640px; margin: 0 0 36px; font-size: 16.5px; }
+
+  /* ---- rule groups ---- */
+  .groups { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  @media (max-width: 760px) { .groups { grid-template-columns: 1fr; } }
+  .group {
+    border: 1px solid var(--border); border-radius: 12px; background: var(--panel);
+    padding: 22px 22px 8px;
+  }
+  .group h3 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 9px; }
+  .group h3 .ic { font-size: 17px; }
+  .group .sub { color: var(--ink-faint); font-size: 13px; margin: 0 0 16px; }
+  .rule { display: flex; gap: 12px; padding: 9px 0; border-top: 1px solid var(--border-soft); font-size: 14px; }
+  .rule:first-of-type { border-top: 0; }
+  .rule .id {
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint);
+    min-width: 56px; padding-top: 2px;
+  }
+  .rule .txt { color: var(--ink-dim); }
+  .rule .sev { width: 7px; height: 7px; border-radius: 50%; margin-top: 8px; flex: none; }
+  .sev-c { background: var(--red); } .sev-h { background: var(--amber); } .sev-m { background: var(--blue); }
+
+  /* ---- stats ---- */
+  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+  @media (max-width: 720px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+  .stat { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 22px; }
+  .stat .n { font-size: 30px; font-weight: 700; letter-spacing: -0.02em; color: var(--ink); font-family: var(--mono); }
+  .stat .l { color: var(--ink-dim); font-size: 13.5px; margin-top: 4px; }
+
+  /* ---- how ---- */
+  .steps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  @media (max-width: 760px) { .steps { grid-template-columns: 1fr; } }
+  .step { border: 1px solid var(--border); border-radius: 12px; padding: 22px; background: var(--panel); }
+  .step .num { font-family: var(--mono); color: var(--green); font-size: 13px; }
+  .step h3 { margin: 8px 0 8px; font-size: 17px; }
+  .step p { margin: 0; color: var(--ink-dim); font-size: 14.5px; }
+  .step .prov { margin-top: 12px; font-size: 12px; color: var(--ink-faint); font-family: var(--mono); }
+
+  /* ---- honesty ---- */
+  .callout {
+    border: 1px solid var(--border); border-left: 3px solid var(--green);
+    background: var(--panel); border-radius: 10px; padding: 22px 24px; color: var(--ink-dim);
+    font-size: 15.5px;
+  }
+  .callout b { color: var(--ink); }
+
+  /* ---- footer ---- */
+  footer { border-top: 1px solid var(--border-soft); padding: 40px 0 56px; color: var(--ink-faint); font-size: 14px; }
+  .foot-row { display: flex; flex-wrap: wrap; gap: 24px; justify-content: space-between; align-items: center; }
+  .foot-links { display: flex; gap: 22px; flex-wrap: wrap; }
+  .foot-links a { color: var(--ink-dim); }
+  .badge-code {
+    display: block; margin-top: 14px; font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+    background: var(--bg-soft); border: 1px solid var(--border-soft); border-radius: 8px; padding: 10px 12px;
+    overflow-x: auto; white-space: nowrap;
+  }
+  .pill { display: inline-block; font-family: var(--mono); font-size: 11px; color: var(--ink-faint); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap nav">
+    <div class="brand"><span class="glyph">🛡️</span> <b>ClearToShip</b></div>
+    <nav class="nav-links">
+      <a href="#coverage" class="hide-sm">Coverage</a>
+      <a href="#how" class="hide-sm">How it works</a>
+      <a href="https://github.com/murtazaozdemir/cleartoship">GitHub</a>
+      <a href="#start" class="nav-cta">Get started</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <!-- HERO -->
+  <section class="hero" style="border-top:0">
+    <div class="wrap">
+      <span class="eyebrow"><span class="dot"></span> Static pre-flight · no account · nothing uploaded</span>
+      <h1>Ship AI-built apps<br><span class="accent">without the leaks.</span></h1>
+      <p class="lede">
+        Cursor, Claude Code, v0 and Lovable write code fast — but they optimise for
+        <em>runs without errors</em>, not <em>runs without leaks</em>. ClearToShip is a 30-second
+        pre-launch check for exactly what they forget: the auth check that was never written,
+        the RLS policy left off, the npm package that doesn't exist.
+      </p>
+      <div class="cta-row">
+        <div class="cmd">
+          <span class="prompt">$</span>
+          <span id="cmd">npx cleartoship</span>
+          <button class="copy" onclick="copyCmd()">copy</button>
+        </div>
+        <a href="https://github.com/murtazaozdemir/cleartoship" class="btn-ghost">★ Star on GitHub</a>
+      </div>
+
+      <!-- terminal demo -->
+      <div class="term" id="term">
+        <div class="term-bar">
+          <span class="b b1"></span><span class="b b2"></span><span class="b b3"></span>
+          <span class="title">cleartoship — pre-flight</span>
+        </div>
+<pre id="scanout"></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATS -->
+  <section style="border-top:0; padding-top:8px">
+    <div class="wrap">
+      <div class="stats">
+        <div class="stat"><div class="n">36</div><div class="l">first-party rules for the AI stack</div></div>
+        <div class="stat"><div class="n">234</div><div class="l">credential patterns, entropy-gated</div></div>
+        <div class="stat"><div class="n">OSV</div><div class="l">live CVE data, not stale regexes</div></div>
+        <div class="stat"><div class="n">0</div><div class="l">accounts, uploads or config</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COVERAGE -->
+  <section id="coverage">
+    <div class="wrap">
+      <p class="kicker">What it catches</p>
+      <h2>The gaps an LLM leaves behind</h2>
+      <p class="section-lede">
+        The failure mode is almost never a dangerous line of code — it's an <strong>absent</strong>
+        one. Every finding maps to OWASP Top&nbsp;10:2025 and a CWE, and comes with the exact fix.
+      </p>
+      <div class="groups">
+
+        <div class="group">
+          <h3><span class="ic">⚡</span> Next.js server surface</h3>
+          <p class="sub">Server Actions, Route Handlers, the client boundary</p>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS001</span><span class="txt">Mutation with no session check — Server Actions are public POST endpoints</span></div>
+          <div class="rule"><span class="sev sev-h"></span><span class="id">CTS002</span><span class="txt">Caller input written with no runtime validation (mass assignment)</span></div>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS042</span><span class="txt">Webhook accepts an unsigned, unverified payload</span></div>
+          <div class="rule"><span class="sev sev-h"></span><span class="id">CTS041</span><span class="txt"><code>getSession()</code> used as server auth — it never revalidates the JWT</span></div>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS045</span><span class="txt">AI SDK set to <code>dangerouslyAllowBrowser</code></span></div>
+        </div>
+
+        <div class="group">
+          <h3><span class="ic">🗄️</span> Supabase &amp; Postgres</h3>
+          <p class="sub">Replays your migrations into a schema model, then judges it</p>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS010</span><span class="txt">Public table with Row Level Security never enabled</span></div>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS012</span><span class="txt">Policy grants writes with an always-true predicate</span></div>
+          <div class="rule"><span class="sev sev-h"></span><span class="id">CTS014</span><span class="txt"><code>user_id</code> column no policy ever compares to <code>auth.uid()</code></span></div>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS019</span><span class="txt"><code>auth.users</code> republished through a public view</span></div>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS018</span><span class="txt">Policy trusts <code>user_metadata</code>, which the user can edit</span></div>
+        </div>
+
+        <div class="group">
+          <h3><span class="ic">📦</span> Supply chain</h3>
+          <p class="sub">Hallucinated and hostile dependencies</p>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS020</span><span class="txt">Dependency that <strong>does not exist</strong> on npm/PyPI — a hallucinated import</span></div>
+          <div class="rule"><span class="sev sev-h"></span><span class="id">CTS023</span><span class="txt">One edit from a popular package (<code>expres</code> → <code>express</code>)</span></div>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS026</span><span class="txt">Registry returns 451 — the package was pulled for malware</span></div>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS028</span><span class="txt"><code>postinstall</code> hook that curls, evals or shells out</span></div>
+          <div class="rule"><span class="sev sev-m"></span><span class="id">CTS024</span><span class="txt">Known CVE for the installed version — resolved live from OSV.dev</span></div>
+        </div>
+
+        <div class="group">
+          <h3><span class="ic">🔑</span> Secrets &amp; client bundle</h3>
+          <p class="sub">Verified, not just pattern-matched</p>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS030</span><span class="txt">Hardcoded service-role, Stripe live, OpenAI, AWS or GitHub key</span></div>
+          <div class="rule"><span class="sev sev-c"></span><span class="id">CTS031</span><span class="txt">Server secret routed through a <code>NEXT_PUBLIC_</code> variable</span></div>
+          <div class="rule"><span class="sev sev-h"></span><span class="id">CTS032</span><span class="txt"><code>.env</code> in a git repo with no matching gitignore rule</span></div>
+          <div class="rule"><span class="sev sev-h"></span><span class="id">GL-*</span><span class="txt">219 more credential providers, gated on Shannon entropy</span></div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW -->
+  <section id="how">
+    <div class="wrap">
+      <p class="kicker">How it works</p>
+      <h2>Four static scanners. No database. No upload.</h2>
+      <p class="section-lede">
+        It reads your repo and exits non-zero if you shouldn't deploy. Everything runs on your
+        machine or your CI runner — the only network calls are anonymous version lookups you can
+        turn off with <code>--offline</code>.
+      </p>
+      <div class="steps">
+        <div class="step">
+          <div class="num">01 · AST</div>
+          <h3>Server Actions &amp; Route Handlers</h3>
+          <p>Parses TS/TSX with Babel and asks, per function, whether it authenticates, validates and scopes its writes — reasoning over the whole body, not a fixed window. Recognises <code>next-safe-action</code> wrappers.</p>
+        </div>
+        <div class="step">
+          <div class="num">02 · SQL</div>
+          <h3>Row Level Security</h3>
+          <p>Replays your <code>.sql</code> migrations in order into a model of the resulting schema, then judges the end state. Same class of check as Supabase's own linter — but static, so it runs on a pull request.</p>
+          <div class="prov">informed by supabase/splinter</div>
+        </div>
+        <div class="step">
+          <div class="num">03 · Registry</div>
+          <h3>Dependency hallucination</h3>
+          <p>Resolves every declared package against npm and PyPI for names that don't exist, freshly-registered slopsquats and typosquats — and reads install commands out of <code>README</code> and <code>AGENTS.md</code> too. Live CVEs from OSV.dev.</p>
+          <div class="prov">OSV.dev · slopcheck</div>
+        </div>
+        <div class="step">
+          <div class="num">04 · Secrets</div>
+          <h3>Credentials &amp; client boundary</h3>
+          <p>Candidate JWTs are decoded and reported only when the payload says <code>role: service_role</code>. 234 patterns in all, each gated on entropy so <code>your_api_key_here</code> never reads as a breach.</p>
+          <div class="prov">gitleaks (MIT) · guardvibe (Apache-2.0)</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CI -->
+  <section id="start">
+    <div class="wrap">
+      <p class="kicker">In your pipeline</p>
+      <h2>One line in CI, or a check on every PR</h2>
+      <p class="section-lede">Run it locally, wire it into GitHub Actions, or drop in the Action for a sticky PR comment and a merge gate.</p>
+      <div class="groups">
+        <div class="group" style="padding-bottom:22px">
+          <h3><span class="ic">▲</span> Command line</h3>
+          <div class="badge-code">npx cleartoship</div>
+          <div class="badge-code">npx cleartoship --fix-prompt   <span class="c-dim"># prompt for Cursor / Claude Code</span></div>
+          <div class="badge-code">npx cleartoship --sarif -o results.sarif</div>
+        </div>
+        <div class="group" style="padding-bottom:22px">
+          <h3><span class="ic">⎇</span> GitHub Action</h3>
+          <div class="badge-code">- uses: actions/checkout@v4</div>
+          <div class="badge-code">- uses: murtazaozdemir/cleartoship@v0.4.0</div>
+          <div class="badge-code">  with: { fail-on: critical, comment: true }</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HONESTY -->
+  <section>
+    <div class="wrap">
+      <div class="callout">
+        <b>ClearToShip is not a replacement for Semgrep, Trivy, OSV-Scanner or TruffleHog.</b>
+        Run those too. It answers a narrower question they don't: <em>given that an LLM wrote this,
+        what did it forget?</em> Open source, MIT-licensed, and it scans its own code on every commit.
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-row">
+      <div>
+        <div class="brand" style="margin-bottom:6px"><span class="glyph">🛡️</span> <b>ClearToShip</b></div>
+        <span class="pill">MIT</span> &nbsp; <span class="pill">v0.4.0</span>
+      </div>
+      <div class="foot-links">
+        <a href="https://github.com/murtazaozdemir/cleartoship">GitHub</a>
+        <a href="https://github.com/murtazaozdemir/cleartoship/blob/main/README.md">Docs</a>
+        <a href="https://github.com/murtazaozdemir/cleartoship/blob/main/ATTRIBUTION.md">Attribution</a>
+        <a href="#coverage">Coverage</a>
+      </div>
+    </div>
+    <p style="margin-top:24px; max-width:640px; color:var(--ink-faint)">
+      Pre-flight security for AI-built &amp; vibe-coded apps. Findings map to OWASP Top&nbsp;10:2025.
+      Vibe coding, securely.
+    </p>
+  </div>
+</footer>
+
+<script>
+  function copyCmd() {
+    navigator.clipboard && navigator.clipboard.writeText('npx cleartoship');
+    var b = document.querySelector('.cmd .copy');
+    if (b) { var t = b.textContent; b.textContent = 'copied'; setTimeout(function(){ b.textContent = t; }, 1200); }
+  }
+
+  // Terminal demo — a real ClearToShip run, revealed line by line.
+  var LINES = [
+    ['c-dim', '  ▸ framework: Next.js (App Router) + Supabase'],
+    ['c-dim', '  [1/5] dependencies …  [2/5] server actions …  [3/5] RLS …'],
+    ['c-dim', '  [4/5] secrets …  [5/5] known vulnerabilities …'],
+    ['', ''],
+    ['c-red',  '  ✖ CRITICAL  CTS001  Missing Server Action authorization'],
+    ['c-dim',  '              app/actions/delete-workspace.ts:7'],
+    ['c-red',  '  ✖ CRITICAL  CTS010  Public table with RLS disabled'],
+    ['c-dim',  '              supabase/migrations/0001_init.sql:16'],
+    ['c-red',  '  ✖ CRITICAL  CTS020  react-hot-toast-notifications does not exist on npm'],
+    ['c-amber','  ✖ HIGH      CTS023  “expres” is one edit from “express”'],
+    ['c-green','  ✔ PASS      234 credential patterns · 0 leaked keys'],
+    ['', ''],
+    ['c-red',  '  VERDICT: 🔴 HOLD — resolve the critical findings before deploying'],
+    ['c-dim',  '  → npx cleartoship --fix-prompt'],
+  ];
+  var out = document.getElementById('scanout');
+  var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;'); }
+  if (out) {
+    if (reduced) {
+      out.innerHTML = LINES.map(function(l){ return '<span class="'+l[0]+'">'+esc(l[1])+'</span>'; }).join('\n');
+    } else {
+      var i = 0;
+      (function tick(){
+        if (i >= LINES.length) return;
+        var l = LINES[i];
+        var span = document.createElement('span');
+        span.className = 'reveal-line ' + l[0];
+        span.textContent = l[1] + (i < LINES.length - 1 ? '\n' : '');
+        out.appendChild(span);
+        i++;
+        setTimeout(tick, l[1] === '' ? 90 : 180);
+      })();
+    }
+  }
+</script>
+</body>
+</html>

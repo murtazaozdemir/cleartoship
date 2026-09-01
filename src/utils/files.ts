@@ -5,7 +5,7 @@ const SKIP_DIRS = new Set([
   'node_modules', '.git', '.next', '.turbo', '.vercel', '.wrangler',
   'dist', 'build', 'out', 'coverage', '.venv', 'venv', '__pycache__',
   '.cache', '.pnpm-store', 'vendor', 'target', '.svelte-kit', '.nuxt',
-  '.cts-cache', '_reference',
+  '.cts-cache', '_reference', 'site',
 ]);
 
 const SCAN_EXTS = new Set([
