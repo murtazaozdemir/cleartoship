@@ -374,3 +374,35 @@ test('OSV reports real advisories for a known-vulnerable version', { skip: !onli
     'vendored CVE-version rules should defer to OSV when it answered',
   );
 });
+
+test('yarn.lock is parsed without a backtracking-prone regex', async () => {
+  const { mkdtempSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+
+  const dir = mkdtempSync(join(tmpdir(), 'cts-yarn-'));
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'x', dependencies: { next: '^14.0.0', zod: '^3.0.0' } }),
+  );
+  writeFileSync(
+    join(dir, 'yarn.lock'),
+    [
+      '# yarn lockfile v1',
+      '',
+      '"next@npm:^14.0.0", next@^14.0.0:',
+      '  version "14.2.3"',
+      '  resolved "https://registry.yarnpkg.com/next/-/next-14.2.3.tgz"',
+      '',
+      'zod@^3.0.0:',
+      '  version: 3.23.8',
+      '',
+    ].join('\n'),
+  );
+
+  const { scan: run } = await import('../dist/index.js');
+  const started = Date.now();
+  const result = await run({ root: dir, offline: true });
+  // A catastrophic-backtracking parser would not return promptly.
+  assert.ok(Date.now() - started < 5000);
+  assert.ok(Array.isArray(result.findings));
+});

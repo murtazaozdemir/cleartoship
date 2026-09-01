@@ -229,10 +229,35 @@ function resolveVersions(root: string, declared: Declared[]): Map<string, string
 
   const yarnLock = readIfPresent('yarn.lock');
   if (yarnLock) {
-    const re = /^"?((?:@[^/\s]+\/)?[^@\s"]+)@[^\n]*?:\n(?:\s+[^\n]*\n)*?\s+version:?\s+"?([^"\s]+)"?/gm;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(yarnLock)) !== null) {
-      if (!resolved.has(m[1]!)) resolved.set(m[1]!, m[2]!);
+    // Parsed line by line rather than with a regex: matching an entry header
+    // and its indented `version` line in one pattern needs a nested quantifier,
+    // which backtracks catastrophically on a crafted lockfile — and a lockfile
+    // is exactly the attacker-influenced input this tool reads in CI.
+    let pendingNames: string[] = [];
+    for (const rawLine of yarnLock.split('\n')) {
+      if (rawLine.length === 0 || rawLine.startsWith('#')) continue;
+
+      if (!/^\s/.test(rawLine)) {
+        // Entry header: `"next@npm:^14.2.3", next@^14.0.0:`
+        pendingNames = rawLine
+          .replace(/:\s*$/, '')
+          .split(',')
+          .map((part) => part.trim().replace(/^"|"$/g, ''))
+          .map((spec) => {
+            const at = spec.lastIndexOf('@');
+            return at > 0 ? spec.slice(0, at) : spec;
+          })
+          .filter(Boolean);
+        continue;
+      }
+
+      const version = /^\s+version:?\s+"?([^"\s]+)"?\s*$/.exec(rawLine)?.[1];
+      if (version && pendingNames.length > 0) {
+        for (const name of pendingNames) {
+          if (!resolved.has(name)) resolved.set(name, version);
+        }
+        pendingNames = [];
+      }
     }
   }
 

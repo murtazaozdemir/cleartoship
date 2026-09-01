@@ -82,6 +82,8 @@ export async function queryOsv(
 
   let batch: any;
   try {
+    // cleartoship-ignore VG120 — OSV_BATCH is a module constant naming a
+    // fixed https://api.osv.dev endpoint; nothing user-controlled reaches it.
     const res = await fetch(OSV_BATCH, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -106,7 +108,9 @@ export async function queryOsv(
     affected.map(async (i) => {
       const q = queries[i]!;
       try {
-        const res = await fetch(OSV_QUERY, {
+        // cleartoship-ignore VG120 — OSV_QUERY is a module constant naming a
+    // fixed https://api.osv.dev endpoint; nothing user-controlled reaches it.
+    const res = await fetch(OSV_QUERY, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
