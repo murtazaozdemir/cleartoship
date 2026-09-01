@@ -1,0 +1,257 @@
+import pc from 'picocolors';
+import { SEVERITY_ORDER } from './types.js';
+import type { Finding, Severity } from './types.js';
+import type { FullScan } from './scan.js';
+
+const RULE = '─'.repeat(74);
+
+const SEVERITY_STYLE: Record<Severity, { label: string; paint: (s: string) => string }> = {
+  critical: { label: 'CRITICAL', paint: (s) => pc.bold(pc.red(s)) },
+  high: { label: 'HIGH    ', paint: pc.red },
+  medium: { label: 'MEDIUM  ', paint: pc.yellow },
+  low: { label: 'LOW     ', paint: pc.blue },
+  info: { label: 'INFO    ', paint: pc.dim },
+};
+
+function indent(text: string, prefix: string): string {
+  return text
+    .split('\n')
+    .map((l) => prefix + l)
+    .join('\n');
+}
+
+function wrap(text: string, width: number): string {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let line = '';
+  for (const word of words) {
+    if (line.length + word.length + 1 > width && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = line ? `${line} ${word}` : word;
+    }
+  }
+  if (line) lines.push(line);
+  return lines.join('\n');
+}
+
+/**
+ * Wraps the prose lines of a fix while leaving indented lines — SQL and code
+ * snippets — exactly as written, since reflowing those would break them.
+ */
+function renderFix(fix: string): string {
+  return fix
+    .split('\n')
+    .map((line, i) => {
+      if (/^\s/.test(line)) return line;
+      const prefixed = i === 0 ? `\u2192 ${line}` : line;
+      return wrap(prefixed, 68);
+    })
+    .join('\n');
+}
+
+export function renderTerminal(scan: FullScan, opts: { showPassed: boolean } = { showPassed: true }): string {
+  const out: string[] = [];
+  const total = scan.findings.length;
+
+  if (total > 0) {
+    out.push('');
+    out.push(pc.dim(RULE));
+    const summary = (['critical', 'high', 'medium', 'low', 'info'] as Severity[])
+      .filter((s) => scan.counts[s] > 0)
+      .map((s) => SEVERITY_STYLE[s].paint(`${scan.counts[s]} ${s}`))
+      .join(pc.dim(' · '));
+    out.push(`  ${pc.bold('SCAN FINDINGS')}  ${pc.dim('(')}${summary}${pc.dim(')')}`);
+    out.push(pc.dim(RULE));
+    out.push('');
+
+    for (const f of scan.findings) {
+      const style = SEVERITY_STYLE[f.severity];
+      const location = f.file ? `${f.file}${f.line ? `:${f.line}` : ''}` : scan.root;
+      out.push(`  ${style.paint('✖ ' + style.label)}  ${pc.bold(f.title)}  ${pc.dim(f.id)}`);
+      out.push(`    ${pc.dim('at')} ${pc.cyan(location)}`);
+      if (f.snippet) out.push(`    ${pc.dim('│')} ${pc.dim(f.snippet)}`);
+      out.push(indent(wrap(f.detail, 68), '    '));
+      out.push(indent(pc.green(renderFix(f.fix)), '    '));
+      if (f.owasp) out.push(`    ${pc.dim(f.owasp)}${f.cwe ? pc.dim(' · ' + f.cwe) : ''}`);
+      out.push('');
+    }
+  }
+
+  if (opts.showPassed) {
+    const passed = scan.checks.filter((c) => c.passed);
+    if (passed.length) {
+      for (const c of passed) {
+        out.push(`  ${pc.green('✔ PASS')}      ${c.label}${c.note ? pc.dim(` — ${c.note}`) : ''}`);
+      }
+      out.push('');
+    }
+  }
+
+  if (scan.warnings.length) {
+    for (const w of scan.warnings) out.push(`  ${pc.yellow('! WARN')}      ${w}`);
+    out.push('');
+  }
+
+  out.push(pc.dim(RULE));
+  const blocking = scan.counts.critical + scan.counts.high;
+  if (scan.counts.critical > 0) {
+    out.push(`  ${pc.bold(pc.red('VERDICT: 🔴 HOLD — resolve the critical findings before deploying'))}`);
+  } else if (blocking > 0) {
+    out.push(`  ${pc.bold(pc.yellow('VERDICT: 🟡 CONDITIONAL — no criticals, but high-severity gaps remain'))}`);
+  } else if (total > 0) {
+    out.push(`  ${pc.bold(pc.green('VERDICT: 🟢 CLEAR TO SHIP'))} ${pc.dim(`— ${total} low-priority note${total === 1 ? '' : 's'}`)}`);
+  } else {
+    out.push(`  ${pc.bold(pc.green('VERDICT: 🟢 CLEAR TO SHIP — all checks passed'))}`);
+  }
+  out.push(pc.dim(RULE));
+  out.push(
+    pc.dim(`  ${scan.fileCount} files · ${(scan.durationMs / 1000).toFixed(1)}s`),
+  );
+
+  if (total > 0) {
+    out.push('');
+    out.push(`  ${pc.dim('Hand the fixes to your AI editor:')}  ${pc.cyan('npx cleartoship --fix-prompt')}`);
+  }
+  out.push('');
+  return out.join('\n');
+}
+
+export function renderJson(scan: FullScan): string {
+  return JSON.stringify(
+    {
+      version: 1,
+      tool: 'cleartoship',
+      root: scan.root,
+      framework: scan.framework,
+      fileCount: scan.fileCount,
+      durationMs: scan.durationMs,
+      verdict:
+        scan.counts.critical > 0 ? 'hold' : scan.counts.high > 0 ? 'conditional' : 'clear',
+      counts: scan.counts,
+      findings: scan.findings,
+      checks: scan.checks,
+      warnings: scan.warnings,
+    },
+    null,
+    2,
+  );
+}
+
+const SARIF_LEVEL: Record<Severity, string> = {
+  critical: 'error',
+  high: 'error',
+  medium: 'warning',
+  low: 'note',
+  info: 'note',
+};
+
+export function renderSarif(scan: FullScan, version: string): string {
+  const rules = new Map<string, any>();
+  for (const f of scan.findings) {
+    if (rules.has(f.id)) continue;
+    rules.set(f.id, {
+      id: f.id,
+      name: f.title.replace(/\s+/g, ''),
+      shortDescription: { text: f.title },
+      fullDescription: { text: f.detail },
+      help: { text: f.fix },
+      defaultConfiguration: { level: SARIF_LEVEL[f.severity] },
+      properties: {
+        tags: [f.owasp, f.cwe].filter(Boolean),
+        'security-severity': String(SEVERITY_ORDER[f.severity] * 2.4),
+      },
+    });
+  }
+  return JSON.stringify(
+    {
+      $schema: 'https://json.schemastore.org/sarif-2.1.0.json',
+      version: '2.1.0',
+      runs: [
+        {
+          tool: {
+            driver: {
+              name: 'ClearToShip',
+              version,
+              informationUri: 'https://cleartoship.app',
+              rules: [...rules.values()],
+            },
+          },
+          results: scan.findings.map((f) => ({
+            ruleId: f.id,
+            level: SARIF_LEVEL[f.severity],
+            message: { text: `${f.title}. ${f.detail}` },
+            locations: [
+              {
+                physicalLocation: {
+                  artifactLocation: { uri: f.file ?? '.' },
+                  region: { startLine: Math.max(1, f.line ?? 1) },
+                },
+              },
+            ],
+          })),
+        },
+      ],
+    },
+    null,
+    2,
+  );
+}
+
+export function renderFixPrompt(scan: FullScan): string {
+  if (scan.findings.length === 0) {
+    return 'ClearToShip found no issues to fix.\n';
+  }
+  const lines: string[] = [];
+  lines.push('# ClearToShip — security fixes to apply');
+  lines.push('');
+  lines.push(
+    'You are fixing security findings in this repository. Apply every fix below. ' +
+      'Do not change unrelated behaviour, do not weaken any existing check, and keep the ' +
+      'project’s existing conventions and helper functions. After each fix, briefly state ' +
+      'what you changed.',
+  );
+  lines.push('');
+  lines.push(`Project: ${scan.framework}`);
+  lines.push('');
+
+  const bySeverity = ['critical', 'high', 'medium', 'low'] as const;
+  for (const sev of bySeverity) {
+    const group = scan.findings.filter((f) => f.severity === sev);
+    if (!group.length) continue;
+    lines.push(`## ${sev.toUpperCase()} (${group.length})`);
+    lines.push('');
+    group.forEach((f, i) => {
+      lines.push(`### ${i + 1}. ${f.title} \`${f.id}\``);
+      lines.push('');
+      if (f.file) lines.push(`**Location:** \`${f.file}${f.line ? `:${f.line}` : ''}\``);
+      if (f.snippet) lines.push(`**Offending line:** \`${f.snippet}\``);
+      lines.push('');
+      lines.push(`**Problem:** ${f.detail}`);
+      lines.push('');
+      lines.push('**Required fix:**');
+      lines.push('');
+      lines.push('```');
+      lines.push(f.fix);
+      lines.push('```');
+      lines.push('');
+    });
+  }
+  lines.push('---');
+  lines.push('');
+  lines.push(
+    'When you are done, re-run `npx cleartoship` and confirm the findings above are gone ' +
+      'and no new ones appeared.',
+  );
+  lines.push('');
+  return lines.join('\n');
+}
+
+export function renderBadge(scan: FullScan): string {
+  const verdict =
+    scan.counts.critical > 0 ? 'hold' : scan.counts.high > 0 ? 'conditional' : 'clear';
+  const colour = verdict === 'clear' ? '10b981' : verdict === 'conditional' ? 'f59e0b' : 'ef4444';
+  const label = verdict === 'clear' ? 'clear%20to%20ship' : verdict;
+  return `[![ClearToShip](https://img.shields.io/badge/ClearToShip-${label}-${colour}?style=flat-square)](https://cleartoship.app)`;
+}

@@ -1,0 +1,40 @@
+{
+  "name": "cleartoship",
+  "version": "0.1.0",
+  "description": "The 30-second pre-launch security clearance for AI-built & vibe-coded apps. Catches missing Server Action auth, Supabase RLS holes, hallucinated npm packages and leaked keys.",
+  "keywords": [
+    "security", "sast", "nextjs", "server-actions", "supabase", "rls",
+    "slopsquatting", "hallucinated-packages", "vibe-coding", "ai-code-review"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "bin": { "cleartoship": "dist/cli.js" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "engines": { "node": ">=18.18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
+    "dev": "tsc -p tsconfig.json --watch",
+    "test": "node --test test/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@babel/parser": "^7.25.0",
+    "@babel/traverse": "^7.25.0",
+    "@babel/types": "^7.25.0",
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.0"
+  },
+  "devDependencies": {
+    "@types/babel__traverse": "^7.20.6",
+    "@types/node": "^22.5.0",
+    "typescript": "^5.6.0"
+  },
+  "optionalDependencies": {
+    "pg": "^8.13.0"
+  }
+}
