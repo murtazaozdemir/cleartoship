@@ -474,3 +474,22 @@ test('CVEs distinguish shipping deps from dev/build deps', { skip: !online && 'o
   assert.equal(check.passed, false);
   assert.match(check.note, /1 shipping/);
 });
+
+test('generated code (Prisma client, *.generated.*) is skipped', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+  const inGenerated = result.findings.filter((f) => (f.file || '').includes('generated/prisma'));
+  assert.deepEqual(inGenerated, [], 'vendor/generated code must not produce findings');
+});
+
+test('webhook that verifies via a framework helper or sig header is not flagged', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+  const cts042 = result.findings.filter((f) => f.id === 'CTS042').map((f) => f.file);
+  assert.ok(
+    cts042.includes('app/api/webhooks/stripe/route.ts'),
+    'the unverified webhook must still be flagged',
+  );
+  assert.ok(
+    !cts042.some((f) => f.includes('stripe-verified')),
+    'a webhook that reads the signature header + verifies must not be flagged',
+  );
+});

@@ -1,6 +1,6 @@
 {
   "name": "cleartoship",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "The 30-second pre-launch security clearance for AI-built & vibe-coded apps. Catches missing Server Action auth, Supabase RLS holes, hallucinated npm packages and leaked keys.",
   "keywords": [
     "security",

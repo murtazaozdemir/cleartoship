@@ -140,7 +140,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: murtazaozdemir/cleartoship@v0.3.0
+      - uses: murtazaozdemir/cleartoship@v0.7.0
         with:
           fail-on: critical
           comment: true

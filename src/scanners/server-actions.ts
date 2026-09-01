@@ -46,7 +46,20 @@ const SIGNATURE_CHECKS = [
   'webhooks.constructEvent', 'constructEvent', 'constructEventAsync', 'verifyHeader',
   'verify', 'verifySignature', 'createHmac', 'timingSafeEqual', 'Webhook', 'validateRequest',
   'verifyWebhook', 'verifyWebhookSignature',
+  // Framework webhook handlers that verify the signature internally, so the
+  // route body delegates rather than calling an hmac primitive directly.
+  'authenticate.webhook', 'webhooks.process', 'webhooks.validate', 'processWebhook',
+  'handleWebhook', 'validateWebhook', 'wh.verify', 'svix.verify',
 ];
+
+/**
+ * Request headers that only exist to carry a webhook signature. A handler that
+ * reads one is participating in signature verification — a route that genuinely
+ * forgot it would not reference the header at all — so reading one clears the
+ * "unverified webhook" check.
+ */
+const SIGNATURE_HEADERS =
+  /(x-shopify-hmac-sha256|x-hub-signature(-256)?|stripe-signature|svix-signature|svix-id|x-signature|x-webhook-signature|x-slack-signature|x-line-signature|paypal-transmission-sig)/i;
 
 /** Schema escape hatches that make validation decorative. */
 const LOOSE_SCHEMA = /\.passthrough\s*\(|z\s*\.\s*(any|unknown)\s*\(|\.catchall\s*\(/g;
@@ -146,6 +159,14 @@ function analyseFunction(path: any, name: string): ActionInfo {
     if (tail === 'from' || tail === 'select' || tail === 'findMany' || tail === 'findUnique' || tail === 'findFirst') {
       info.hasRead = true;
     }
+    // Reading a webhook-signature header counts as participating in
+    // verification (see SIGNATURE_HEADERS).
+    for (const arg of inner.node.arguments ?? []) {
+      if (arg?.type === 'StringLiteral' && SIGNATURE_HEADERS.test(arg.value)) {
+        info.hasSignatureCheck = true;
+      }
+    }
+
     // Raw SQL: db.query(`DELETE FROM ...`) / sql`UPDATE ...`
     if (tail === 'query' || tail === 'execute' || tail === 'unsafe' || tail === 'raw') {
       for (const arg of inner.node.arguments ?? []) {
