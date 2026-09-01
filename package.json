@@ -1,21 +1,40 @@
 {
   "name": "cleartoship",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "The 30-second pre-launch security clearance for AI-built & vibe-coded apps. Catches missing Server Action auth, Supabase RLS holes, hallucinated npm packages and leaked keys.",
   "keywords": [
-    "security", "sast", "nextjs", "server-actions", "supabase", "rls",
-    "slopsquatting", "hallucinated-packages", "vibe-coding", "ai-code-review"
+    "security",
+    "sast",
+    "nextjs",
+    "server-actions",
+    "supabase",
+    "rls",
+    "slopsquatting",
+    "hallucinated-packages",
+    "vibe-coding",
+    "ai-code-review"
   ],
   "license": "MIT",
   "type": "module",
-  "bin": { "cleartoship": "dist/cli.js" },
+  "bin": {
+    "cleartoship": "dist/cli.js"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
   },
-  "files": ["dist", "README.md", "LICENSE"],
-  "engines": { "node": ">=18.18" },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.18"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/cli.js",
     "dev": "tsc -p tsconfig.json --watch",
@@ -36,5 +55,14 @@
   },
   "optionalDependencies": {
     "pg": "^8.13.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/murtazaozdemir/cleartoship.git"
+  },
+  "bugs": {
+    "url": "https://github.com/murtazaozdemir/cleartoship/issues"
+  },
+  "homepage": "https://cleartoship.app",
+  "author": "Murtaza Ozdemir"
 }

@@ -77,6 +77,20 @@ reaches a manifest.
 | **CTS032** | high | `.env` in a git repo with no matching `.gitignore` rule |
 | **CTS033** | critical | `'use client'` component reaching for a server-only secret |
 
+**Community ruleset** — 436 additional rules vendored from
+[GuardVibe](https://github.com/goklab/guardvibe) (Apache-2.0)
+
+Reported under their upstream `VG###` ids. These cover ground the AST scanners
+don't: known-vulnerable framework versions (`next` 14.2.3 is still shipped by a
+lot of AI scaffolds and carries CVE-2025-29927, a middleware auth bypass),
+Dockerfiles, Terraform, GitHub Actions pinning, prompt injection and MCP tool
+runtimes, React Native, Go and shell.
+
+27 upstream rules are **superseded** where ClearToShip's own AST check is more
+precise, and 5 are **withheld** as measurably noisy — both lists carry a reason
+per rule in `src/scanners/community.ts`. Run `--no-community` to use only
+ClearToShip's rules. See [ATTRIBUTION.md](ATTRIBUTION.md).
+
 Findings map to **OWASP Top 10:2025** and CWE.
 
 ## Usage
@@ -90,6 +104,7 @@ npx cleartoship --json -o report.json    # machine-readable
 npx cleartoship --sarif -o results.sarif # GitHub code scanning
 npx cleartoship --fail-on high           # stricter CI gate (default: critical)
 npx cleartoship --ignore CTS004,CTS022   # skip rules
+npx cleartoship --no-community           # ClearToShip rules only
 ```
 
 Suppress a single finding inline:
@@ -99,7 +114,9 @@ Suppress a single finding inline:
 export async function reconcileBilling() { … }
 ```
 
-`// cts-ignore` on its own suppresses every rule on that line.
+`// cts-ignore` on its own suppresses every rule at that location. The directive
+may sit at the top of a multi-line comment block, so a real justification has
+room to be written out.
 
 ## Continuous integration
 

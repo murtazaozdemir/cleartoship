@@ -14,7 +14,13 @@ const SCAN_EXTS = new Set([
   // Prose files matter: AI agents copy `npm install <hallucination>` out of
   // READMEs and agent instruction files long before it reaches a manifest.
   '.md', '.mdc', '.mdx',
+  // Reachable by the vendored community ruleset, which covers more ecosystems
+  // than the AST scanners do.
+  '.py', '.go', '.sh', '.bash', '.tf', '.tfvars', '.rb', '.php',
 ]);
+
+/** Extensionless files worth reading. */
+const NAMED_FILES = new Set(['Dockerfile', 'Makefile', 'Procfile']);
 
 /** Instruction files read by coding agents. No extension, but high signal. */
 const AGENT_FILES = new Set([
@@ -55,6 +61,8 @@ export function walk(root: string): string[] {
       if (
         SCAN_EXTS.has(ext) ||
         AGENT_FILES.has(entry) ||
+        NAMED_FILES.has(entry) ||
+        entry.startsWith('Dockerfile') ||
         entry.startsWith('.env') ||
         entry === 'requirements.txt'
       ) {
@@ -112,4 +120,46 @@ export function isSql(file: string): boolean {
 export function isProse(file: string): boolean {
   const base = file.slice(file.lastIndexOf('/') + 1);
   return /\.(md|mdc|mdx|txt)$/.test(base) || AGENT_FILES.has(base);
+}
+
+/** Language tokens the vendored community rules match on. */
+export function languagesFor(file: string): string[] {
+  const base = file.slice(file.lastIndexOf('/') + 1);
+  const ext = base.includes('.') ? base.slice(base.lastIndexOf('.')) : '';
+  if (base.startsWith('Dockerfile')) return ['dockerfile'];
+  switch (ext) {
+    case '.ts':
+    case '.tsx':
+    case '.mts':
+    case '.cts':
+      return ['typescript', 'javascript'];
+    case '.js':
+    case '.jsx':
+    case '.mjs':
+    case '.cjs':
+      return ['javascript'];
+    case '.json':
+      return base === 'vercel.json' ? ['json', 'vercel-config'] : ['json'];
+    case '.sql':
+      return ['sql'];
+    case '.yml':
+    case '.yaml':
+      return ['yaml'];
+    case '.py':
+      return ['python'];
+    case '.go':
+      return ['go'];
+    case '.sh':
+    case '.bash':
+      return ['shell'];
+    case '.tf':
+    case '.tfvars':
+      return ['terraform'];
+    case '.rb':
+      return ['ruby'];
+    case '.php':
+      return ['php'];
+    default:
+      return [];
+  }
 }

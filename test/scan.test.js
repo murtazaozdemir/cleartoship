@@ -261,3 +261,44 @@ test('registry rules resolve hallucinated and lookalike packages', { skip: !onli
   // Real packages must never be reported as missing.
   assert.ok(!hallucinated.includes('next') && !hallucinated.includes('react'));
 });
+
+test('--no-community leaves only ClearToShip rules', async () => {
+  const withCommunity = await scan({ root: VULNERABLE, offline: true });
+  const withoutCommunity = await scan({ root: VULNERABLE, offline: true, noCommunity: true });
+
+  assert.ok(withCommunity.findings.some((f) => f.id.startsWith('VG')));
+  assert.ok(!withoutCommunity.findings.some((f) => f.id.startsWith('VG')));
+  assert.ok(withCommunity.findings.length > withoutCommunity.findings.length);
+});
+
+test('vendored rules add coverage without duplicating our own', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+  const community = result.findings.filter((f) => f.id.startsWith('VG'));
+  assert.ok(community.length > 0, 'the community ruleset should contribute findings');
+
+  // Every vendored finding must carry its attribution.
+  for (const f of community) {
+    assert.equal(f.meta.source, 'guardvibe');
+    assert.match(f.meta.attribution, /Apache-2\.0/);
+  }
+
+  // A superseded rule must never appear beside the rule that replaced it.
+  const ids = new Set(community.map((f) => f.id));
+  for (const superseded of ['VG400', 'VG401', 'VG402', 'VG427', 'VG952', 'VG1007']) {
+    assert.ok(!ids.has(superseded), `${superseded} is superseded and must not fire`);
+  }
+});
+
+test('suppression directives work from the top of a comment block', () => {
+  const sup = new Suppressions(
+    [
+      'const a = 1',
+      '// cleartoship-ignore VG010 — this is why,',
+      '// and here is the second line of the reason.',
+      'const b = 2',
+    ].join('\n'),
+  );
+  assert.equal(sup.suppressed(4, 'VG010'), true, 'directive may start the comment block');
+  assert.equal(sup.suppressed(4, 'VG999'), false, 'other rules are unaffected');
+  assert.equal(sup.suppressed(1, 'VG010'), false, 'code above the block is unaffected');
+});

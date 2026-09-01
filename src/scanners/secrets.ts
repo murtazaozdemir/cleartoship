@@ -66,7 +66,7 @@ const PATTERNS: Pattern[] = [
 const PLACEHOLDER =
   /(your[_-]?|example|placeholder|sample|template|<[a-z_ -]+>|\.\.\.|\u2026|changeme|change_me|dummy|redacted|notreal|fake|mock|s3cret|abc123|deadbeef|1234567|xxx|yyy|zzz|\bfoo\b|\bbar\b)/i;
 
-/** The same character five or more times running, e.g. `sk_live_aaaaaaaa`. */
+/** The same character five or more times running, as in a filler-value key. */
 const REPEATED_RUN = /(.)\1{4,}/;
 
 /**

@@ -1,0 +1,106 @@
+/*
+ * Vendored from GuardVibe — https://github.com/goklab/guardvibe
+ * Copyright 2026 GokLab. Licensed under the Apache License, Version 2.0.
+ * Full licence: LICENSES/guardvibe-Apache-2.0.txt
+ *
+ * Modifications by ClearToShip: import paths rewritten for this package
+ * layout. Rule content is unchanged; rules that duplicate ClearToShip's own
+ * AST checks are disabled at runtime in src/scanners/community.ts rather
+ * than deleted here, so this file stays a faithful copy of upstream.
+ */
+
+import type { SecurityRule } from "./types.js";
+
+export const dockerfileRules: SecurityRule[] = [
+  {
+    id: "VG200",
+    name: "Container running as root",
+    severity: "high",
+    owasp: "A05:2025 Security Misconfiguration",
+    description: "Dockerfile has no USER instruction. Container will run as root, increasing attack surface.",
+    pattern: /^FROM\s+\S+(?:(?!^USER\s)[\s\S])*$/gim,
+    languages: ["dockerfile"],
+    fix: "Add a USER instruction after installing dependencies: USER node (or appropriate non-root user).",
+    fixCode: "FROM node:20-alpine\nRUN addgroup -S app && adduser -S app -G app\n# ... install dependencies ...\nUSER app\nCMD [\"node\", \"server.js\"]",
+    compliance: ["SOC2:CC6.1"],
+  },
+  {
+    id: "VG201",
+    name: "COPY all before dependency install",
+    severity: "medium",
+    owasp: "A05:2025 Security Misconfiguration",
+    description: "COPY . . before RUN install copies everything including secrets into the image layer history.",
+    pattern: /COPY\s+\.\s+\.\s*\n[\s\S]*?RUN\s+.*(?:npm|pip|go|bundle|cargo)\s+install/gi,
+    languages: ["dockerfile"],
+    fix: "Copy only dependency files first (package.json, requirements.txt), then install, then copy source.",
+    fixCode: "# Copy dependency files first\nCOPY package.json package-lock.json ./\nRUN npm ci --production\n# Then copy source\nCOPY . .",
+    compliance: ["SOC2:CC6.1"],
+  },
+  {
+    id: "VG202",
+    name: "Using latest or untagged image",
+    severity: "medium",
+    owasp: "A03:2025 Software Supply Chain Failures",
+    description: "Using :latest tag or no tag makes builds non-reproducible and vulnerable to supply chain attacks.",
+    pattern: /^FROM\s+[^\s:@]+(?::latest)?(?=\s)/gim,
+    languages: ["dockerfile"],
+    fix: "Pin to a specific version tag: FROM node:20-alpine instead of FROM node:latest.",
+    fixCode: "# Pin to specific version\nFROM node:20-alpine\n# Not: FROM node:latest\n# Not: FROM node",
+    compliance: ["SOC2:CC7.1"],
+  },
+  {
+    id: "VG203",
+    name: "Secrets in ENV instruction",
+    severity: "critical",
+    owasp: "A01:2025 Broken Access Control",
+    description: "Secrets hardcoded in ENV instruction are visible in image history and to anyone with image access.",
+    pattern: /ENV\s+\S*(?:KEY|SECRET|PASSWORD|TOKEN|CREDENTIAL)\S*\s*=?\s*\S+/gi,
+    languages: ["dockerfile"],
+    fix: "Use runtime environment variables or Docker secrets instead of baking secrets into the image.",
+    fixCode: "# Don't bake secrets in image\n# Instead, pass at runtime:\n# docker run -e SECRET_KEY=xxx myapp\n# Or use Docker secrets / .env file",
+    compliance: ["SOC2:CC6.1", "PCI-DSS:Req2.3"],
+  },
+  {
+    id: "VG204",
+    name: "Using ADD instead of COPY",
+    severity: "medium",
+    owasp: "A05:2025 Security Misconfiguration",
+    description: "ADD has extra features (URL fetch, tar extraction) that can introduce unexpected behavior. Use COPY for local files.",
+    // Anchor to start of line + case-sensitive: Docker `ADD` instruction is uppercase and
+    // begins a line. Matching `add` case-insensitive caught `RUN pnpm add`, `apk add`,
+    // `yarn add`, etc. — package-manager subcommands inside RUN, not Docker instructions.
+    pattern: /^ADD\s+(?!https?:\/\/)\S+\s+\S+/gm,
+    languages: ["dockerfile"],
+    fix: "Use COPY instead of ADD for local files. Only use ADD for URLs or tar extraction.",
+    fixCode: "# Use COPY for local files\nCOPY ./src /app/src\n# Only use ADD for remote files or tar extraction\n# ADD https://example.com/file.tar.gz /app/",
+    compliance: ["SOC2:CC6.1"],
+  },
+  {
+    id: "VG205",
+    name: "Docker Socket Mount",
+    severity: "critical",
+    owasp: "A05:2025 Security Misconfiguration",
+    description:
+      "Docker socket (/var/run/docker.sock) is mounted into a container. This grants the container full control over the Docker daemon — equivalent to root access on the host. CVE-2025-9074 and numerous container escape attacks exploit this.",
+    pattern: /(?:-v|--volume|volumes:)\s*.*\/var\/run\/docker\.sock/gi,
+    languages: ["yaml", "dockerfile", "shell"],
+    fix: "Never mount the Docker socket into application containers. Use Docker-in-Docker (dind) with TLS for CI runners that need Docker access.",
+    fixCode:
+      '# BAD: full host Docker access\n# -v /var/run/docker.sock:/var/run/docker.sock\n\n# GOOD: use Docker-in-Docker with TLS for CI\nservices:\n  dind:\n    image: docker:dind\n    privileged: true\n    environment:\n      DOCKER_TLS_CERTDIR: /certs',
+    compliance: ["SOC2:CC6.1", "PCI-DSS:Req6.5.10"],
+  },
+  {
+    id: "VG206",
+    name: "Dockerfile Missing HEALTHCHECK",
+    severity: "medium",
+    owasp: "A05:2025 Security Misconfiguration",
+    description:
+      "Dockerfile has CMD or ENTRYPOINT but no HEALTHCHECK instruction. Without health checks, orchestrators cannot detect when the application is unresponsive, leading to silent failures and stale container routing.",
+    pattern: /^FROM\s+\S+[\s\S]*?(?:CMD|ENTRYPOINT)\s+(?:(?!HEALTHCHECK)[\s\S])*$/gim,
+    languages: ["dockerfile"],
+    fix: "Add a HEALTHCHECK instruction to verify the application is responding.",
+    fixCode:
+      'HEALTHCHECK --interval=30s --timeout=3s --retries=3 \\\n  CMD curl -f http://localhost:3000/health || exit 1\n\nCMD ["node", "server.js"]',
+    compliance: ["SOC2:CC7.1"],
+  },
+];

@@ -482,6 +482,8 @@ export const serverActionsScanner: Scanner = {
               if (d.init?.type !== 'ArrowFunctionExpression' && d.init?.type !== 'FunctionExpression') return;
               const name = d.id.name;
               const method = routeFile && /^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(name) ? name : undefined;
+              // cleartoship-ignore VG010 — Babel's AST accessor, not a SQL call;
+              // the rule's verb list includes the generic `get`.
               const initPath = path.get(`declaration.declarations.${i}.init`);
               handle(initPath, name, true, method);
             });

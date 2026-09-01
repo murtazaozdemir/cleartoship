@@ -46,6 +46,7 @@ program
   .option('--badge', 'print the markdown status badge for your README')
   .option('-o, --output <file>', 'write the chosen output to a file instead of stdout')
   .option('--offline', 'skip registry lookups (no network)')
+  .option('--no-community', 'run only ClearToShip rules, skipping the vendored community ruleset')
   .option('--ignore <ids>', 'comma-separated rule ids to skip, e.g. CTS004,CTS022')
   .option('--only <ids>', 'comma-separated rule ids to report exclusively')
   .option('--no-banner', 'suppress the ASCII header')
@@ -66,6 +67,7 @@ program
       root: opts.cwd,
       paths,
       offline: opts.offline,
+      noCommunity: opts.community === false,
       ignore: list(opts.ignore),
       only: list(opts.only),
       minSeverity: opts.minSeverity as Severity,

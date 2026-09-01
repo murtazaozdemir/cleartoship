@@ -1,0 +1,89 @@
+/*
+ * Vendored from GuardVibe — https://github.com/goklab/guardvibe
+ * Copyright 2026 GokLab. Licensed under the Apache License, Version 2.0.
+ * Full licence: LICENSES/guardvibe-Apache-2.0.txt
+ *
+ * Modifications by ClearToShip: import paths rewritten for this package
+ * layout. Rule content is unchanged; rules that duplicate ClearToShip's own
+ * AST checks are disabled at runtime in src/scanners/community.ts rather
+ * than deleted here, so this file stays a faithful copy of upstream.
+ */
+
+import type { SecurityRule } from "./types.js";
+
+export const terraformRules: SecurityRule[] = [
+  {
+    id: "VG300",
+    name: "Public S3 bucket",
+    severity: "critical",
+    owasp: "A01:2025 Broken Access Control",
+    description: "S3 bucket configured with public access. This exposes data to the entire internet.",
+    pattern: /(?:acl\s*=\s*["']public|public_access_block_configuration[\s\S]*?block_public_acls\s*=\s*false)/gi,
+    languages: ["terraform"],
+    fix: "Set ACL to private and enable public access blocking.",
+    fixCode: 'resource "aws_s3_bucket" "example" {\n  bucket = "my-bucket"\n}\n\nresource "aws_s3_bucket_public_access_block" "example" {\n  bucket = aws_s3_bucket.example.id\n  block_public_acls = true\n  block_public_policy = true\n}',
+    compliance: ["SOC2:CC6.1", "PCI-DSS:Req3.4", "HIPAA:§164.312(a)"],
+  },
+  {
+    id: "VG301",
+    name: "Open security group ingress",
+    severity: "critical",
+    owasp: "A05:2025 Security Misconfiguration",
+    description: "Security group allows inbound traffic from 0.0.0.0/0 (entire internet).",
+    pattern: /cidr_blocks\s*=\s*\[?\s*["']0\.0\.0\.0\/0["']/gi,
+    languages: ["terraform"],
+    fix: "Restrict cidr_blocks to specific IP ranges needed for access.",
+    fixCode: 'ingress {\n  from_port   = 443\n  to_port     = 443\n  protocol    = "tcp"\n  cidr_blocks = ["10.0.0.0/8"]  # Internal only\n}',
+    compliance: ["SOC2:CC6.6", "PCI-DSS:Req6.5.10"],
+  },
+  {
+    id: "VG302",
+    name: "Unencrypted RDS instance",
+    severity: "high",
+    owasp: "A02:2025 Cryptographic Failures",
+    description: "RDS database instance without storage encryption. Data at rest is unprotected.",
+    pattern: /resource\s*["']aws_db_instance["'][^{]*\{[^}]*storage_encrypted\s*=\s*false/gi,
+    languages: ["terraform"],
+    fix: "Add storage_encrypted = true to all RDS instances.",
+    fixCode: 'resource "aws_db_instance" "example" {\n  storage_encrypted = true\n  # ...\n}',
+    compliance: ["SOC2:CC6.1", "PCI-DSS:Req3.4", "HIPAA:§164.312(a)"],
+  },
+  {
+    id: "VG303",
+    name: "IAM wildcard policy",
+    severity: "critical",
+    owasp: "A01:2025 Broken Access Control",
+    description: "IAM policy with wildcard (*) Action or Resource grants excessive permissions.",
+    pattern: /(?:Action|Resource)\s*=\s*["']\*["']/gi,
+    languages: ["terraform"],
+    fix: "Follow least-privilege: specify exact actions and resources needed.",
+    fixCode: 'statement {\n  actions   = ["s3:GetObject", "s3:PutObject"]\n  resources = ["arn:aws:s3:::my-bucket/*"]\n}',
+    compliance: ["SOC2:CC6.1", "PCI-DSS:Req8"],
+  },
+  {
+    id: "VG304",
+    name: "Hardcoded secrets in Terraform",
+    severity: "critical",
+    owasp: "A01:2025 Broken Access Control",
+    description: "Secrets or credentials hardcoded in Terraform configuration files.",
+    pattern: /(?:password|secret_key|access_key|api_key|token)\s*=\s*["'][^"']{8,}["']/gi,
+    languages: ["terraform"],
+    fix: "Use Terraform variables with sensitive = true or reference a secrets manager.",
+    fixCode: 'variable "db_password" {\n  type      = string\n  sensitive = true\n}\n\nresource "aws_db_instance" "example" {\n  password = var.db_password\n}',
+    compliance: ["SOC2:CC6.1", "PCI-DSS:Req2.3", "HIPAA:§164.312(a)"],
+  },
+  {
+    id: "VG305",
+    name: "Terraform State File Tracked in Git",
+    severity: "critical",
+    owasp: "A01:2025 Broken Access Control",
+    description:
+      "Terraform state file (*.tfstate) contains all infrastructure secrets in plaintext — database passwords, API keys, private IPs. If committed to git, these secrets are exposed in the repository history permanently.",
+    pattern: /(?:terraform\.tfstate|\.tfstate)/gi,
+    languages: ["terraform", "shell"],
+    fix: "Add *.tfstate and *.tfstate.* to .gitignore. Use remote backends (S3, GCS, Terraform Cloud) with encryption enabled.",
+    fixCode:
+      '# .gitignore\n*.tfstate\n*.tfstate.*\n\n# Use encrypted remote backend\nterraform {\n  backend "s3" {\n    bucket  = "my-tf-state"\n    key     = "prod/terraform.tfstate"\n    encrypt = true\n  }\n}',
+    compliance: ["SOC2:CC6.1", "PCI-DSS:Req2.3", "HIPAA:§164.312(a)"],
+  },
+];

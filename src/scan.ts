@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { walk } from './utils/files.js';
 import { detectFramework } from './utils/detect.js';
-import { SCANNERS } from './scanners/index.js';
+import { SCANNERS, communityScanner } from './scanners/index.js';
 import { SEVERITY_ORDER } from './types.js';
 import type { CheckSummary, Finding, ProjectContext, Severity } from './types.js';
 
@@ -14,6 +14,8 @@ export interface ScanOptions {
   ignore?: string[];
   only?: string[];
   minSeverity?: Severity;
+  /** Skip the vendored community ruleset, leaving only ClearToShip's own checks. */
+  noCommunity?: boolean;
   verbose?: boolean;
   onProgress?: (step: number, total: number, name: string) => void;
 }
@@ -46,7 +48,9 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
     verbose: Boolean(options.verbose),
   };
 
-  const active = SCANNERS.filter((s) => s.applies(ctx));
+  const active = SCANNERS.filter(
+    (s) => s.applies(ctx) && !(options.noCommunity && s === communityScanner),
+  );
   const findings: Finding[] = [];
   const checks: CheckSummary[] = [];
   const warnings: string[] = [];

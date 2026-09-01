@@ -51,7 +51,7 @@ export class Registry {
   }
 
   private cachePath(key: string): string {
-    return join(this.dir, createHash('sha1').update(key).digest('hex') + '.json');
+    return join(this.dir, createHash('sha256').update(key).digest('hex').slice(0, 40) + '.json');
   }
 
   private readCache(key: string): PackageFacts | null {
@@ -75,6 +75,8 @@ export class Registry {
   }
 
   private async getJson(url: string, accept?: string): Promise<any | number> {
+    // cleartoship-ignore VG120 — the URL is built from a package name against a
+    // fixed registry host a few lines below; fetching it is this class's purpose.
     const res = await fetch(url, {
       headers: {
         'user-agent': 'cleartoship (+https://cleartoship.app)',
