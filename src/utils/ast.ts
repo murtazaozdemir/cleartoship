@@ -17,7 +17,10 @@ export function parseSource(code: string, filename: string): File | null {
     'classPrivateMethods',
     'dynamicImport',
     'topLevelAwait',
-    'importAssertions',
+    // `importAssertions` until Babel 8 removed it, which makes every parse
+    // throw and silently costs every AST rule its findings. The replacement
+    // has existed since 7.22, so this is correct on both.
+    'importAttributes',
     'explicitResourceManagement',
   ];
   if (isTs || isTsx) plugins.push('typescript');
