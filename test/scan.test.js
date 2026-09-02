@@ -298,6 +298,31 @@ test('gitignore patterns follow git, not glob intuition', () => {
   assert.equal(rules.ignores('/elsewhere/logs', true), false, 'rules stop at their own tree');
 });
 
+test('an ignored directory can have a re-included subdirectory', () => {
+  // The shape that exposed the bug, from a real repository: everything under
+  // logos/ is ignored except one subdirectory, whose files are tracked.
+  const rules = Gitignore.empty().extend('/repo', ['logos/*', '!logos/logos-in-app/'].join('\n'));
+
+  assert.equal(rules.ignores('/repo/logos/scratch.svg', false), true);
+  assert.equal(rules.ignores('/repo/logos/logos-in-app', true), false, 're-included');
+  assert.equal(
+    rules.ignores('/repo/logos/logos-in-app/anim-pulse-24.svg', false),
+    false,
+    'a pattern matches a path, not everything beneath it — the walk prunes directories instead',
+  );
+});
+
+test('a pattern that will not compile does not end the scan', () => {
+  // `[z-a]` is a reversed range. This used to throw out of walk(), before any
+  // scanner error handling, and kill the run on one line of somebody's file.
+  const rules = Gitignore.empty().extend(
+    '/repo',
+    ['**/[z-a]/**', '[unclosed', 'node_modules', 'x'.repeat(900)].join('\n'),
+  );
+  assert.equal(rules.ignores('/repo/node_modules', true), true, 'the valid rules still apply');
+  assert.equal(rules.ignores('/repo/src/index.ts', false), false);
+});
+
 test('a nested .gitignore overrides the one above it', () => {
   const rules = Gitignore.empty()
     .extend('/repo', '*.json')

@@ -1,6 +1,8 @@
 import { read, rel, lineAt, snippetAt, languagesFor } from '../utils/files.js';
 import { Suppressions } from '../utils/suppress.js';
 import { adjustForPath } from '../utils/paths.js';
+import { commentStyleFor, lexSpans, isInside } from '../utils/spans.js';
+import type { Span } from '../utils/spans.js';
 import {
   GUARDVIBE_RULES,
   GUARDVIBE_ATTRIBUTION,
@@ -193,30 +195,14 @@ function sqlGuard(match: string, source: string, index: number): boolean {
   return !isParameterized(statementAround(source, index));
 }
 
-/** Whether `index` falls inside a quoted string on its own line. */
-function insideStringLiteral(source: string, index: number): boolean {
-  const lineStart = source.lastIndexOf('\n', index - 1) + 1;
-  let quote: string | null = null;
-  for (let i = lineStart; i < index; i++) {
-    const ch = source[i];
-    if (ch === '\\') {
-      i++;
-      continue;
-    }
-    if (quote) {
-      if (ch === quote) quote = null;
-    } else if (ch === '"' || ch === "'" || ch === '`') {
-      quote = ch;
-    }
-  }
-  return quote !== null;
-}
-
 /**
  * Per-rule filters for a match shape the upstream regex cannot exclude on its
  * own. Given the matched text plus where it sat, so a guard can look around it.
  */
-const MATCH_GUARDS: Record<string, (match: string, source: string, index: number) => boolean> = {
+const MATCH_GUARDS: Record<
+  string,
+  (match: string, source: string, index: number, spans: readonly Span[]) => boolean
+> = {
   // A `"link": true` entry is a workspace or pnpm symlink resolved to a path on
   // disk rather than a tarball, so it has no integrity hash by design. Thirty of
   // them in one pnpm-managed lockfile, every one reported as a false critical.
@@ -274,8 +260,8 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
   // `eval("require")` is the documented escape hatch for keeping a bundler from
   // statically resolving a require — a constant the author typed, with no input
   // reaching it. Dynamic code execution is about the dynamic part.
-  VG014: (match, source, index) => {
-    if (insideStringLiteral(source, index)) return false;
+  VG014: (match, source, index, spans) => {
+    if (isInside(spans, index, 'string')) return false;
     const after = source.slice(index, index + 60);
     return !/^(?:eval|new\s+Function)\s*\(\s*(['"])[A-Za-z_$][\w$]*\1\s*\)/.test(after);
   },
@@ -408,6 +394,7 @@ export const communityScanner: Scanner = {
 
       const relPath = rel(ctx.root, file);
       const lockfile = LOCKFILE.test(relPath);
+      const spans = lexSpans(source, commentStyleFor(languages));
       const suppress = new Suppressions(source);
       filesScanned++;
 
@@ -428,7 +415,14 @@ export const communityScanner: Scanner = {
           }
           // Skipping a match must not skip the non-global `break` below, or a
           // rule without /g would rescan from zero forever.
-          if (guard && !guard(m[0], source, m.index)) {
+          // A rule that matched inside a comment matched prose about code, not
+          // code. Nothing in the vendored ruleset targets comment content, and
+          // a commented-out call is not a call.
+          if (isInside(spans, m.index, 'comment')) {
+            if (!re.global) break;
+            continue;
+          }
+          if (guard && !guard(m[0], source, m.index, spans)) {
             if (!re.global) break;
             continue;
           }
