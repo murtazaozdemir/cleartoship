@@ -278,6 +278,16 @@ uploaded, and no database is connected to.
   a network blip must never be reported as a hallucinated dependency.
 - **Test fixtures are not breaches.** Credentials under `tests/`, `fixtures/`, `docs/` or in a
   commented-out line are reported at `low`, never as blocking criticals.
+- **Where a file lives changes what a finding costs.** CTS024 already separated a
+  CVE that ships from one that only ever runs on your machine; the same reasoning
+  now covers the rules that read code. An interpolated query in `scripts/`, a
+  swallowed error in a `*.config.ts` — build and maintenance tooling runs with
+  credentials its author already holds and never answers a request from the
+  internet, so those drop one severity step, with the reason attached to the
+  finding rather than applied silently. `bin/` and `migrations/` are deliberately
+  excluded: one is a published CLI's entry point, the other is production schema.
+  Across five dogfooded repos this moved 21 findings out of `critical` without
+  hiding one of them.
 - **Mass assignment means the payload arrives whole.** CTS002 and CTS043 fire when
   the object the caller sent reaches the columns — `update(body)`,
   `data: { ...input }`, including one level down where Prisma and Drizzle put it.

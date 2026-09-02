@@ -1,4 +1,5 @@
 import { read, rel, isScript, snippetAt } from '../utils/files.js';
+import { adjustForPath } from '../utils/paths.js';
 import { parseSource, calleeName, calleeTail } from '../utils/ast.js';
 import { traverse } from '../utils/traverse.js';
 import { Suppressions } from '../utils/suppress.js';
@@ -79,11 +80,17 @@ export const logicScanner: Scanner = {
       const source = read(file);
       if (source === null) continue;
       const relPath = rel(ctx.root, file);
+      // A swallowed error or a logged token in a maintenance script is a
+      // smaller problem than the same line inside a request handler.
+      const place = (f: any) => {
+        const placed = adjustForPath(f.severity, relPath);
+        return { ...f, severity: placed.severity, detail: f.detail + placed.note };
+      };
       const suppress = new Suppressions(source);
 
       const push = (f: Omit<Finding, 'file'> & { line: number }) => {
         if (suppress.suppressed(f.line, f.id)) return;
-        result.findings.push({ ...f, file: relPath, snippet: snippetAt(source, f.line) });
+        result.findings.push({ ...place(f), file: relPath, snippet: snippetAt(source, f.line) });
       };
 
       // Python is regex-only (no JS AST). Cover its highest-signal cases.

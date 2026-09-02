@@ -137,6 +137,27 @@ test('lockfile entries are judged as lockfile entries', async () => {
   }
 });
 
+test('where a file lives changes what a finding in it costs', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+
+  // Build tooling: real finding, one step down, and the report says why.
+  const seed = result.findings.filter((f) => f.file === 'scripts/seed.mjs');
+  assert.ok(seed.length > 0, 'an interpolated query in a script is still reported');
+  for (const f of seed) {
+    assert.equal(f.severity, 'high', `${f.id} should be demoted from critical, not dropped`);
+    assert.match(f.detail, /build or maintenance tooling/);
+  }
+
+  // The same shape in the app itself keeps its full severity.
+  const app = result.findings.filter(
+    (f) => f.id === 'VG010' && !f.file.startsWith('scripts/'),
+  );
+  assert.ok(
+    app.every((f) => !/build or maintenance tooling/.test(f.detail)),
+    'application code is not demoted',
+  );
+});
+
 test('mass assignment is the payload arriving whole, not any write of caller input', async () => {
   const bad = await scan({ root: VULNERABLE, offline: true });
   const flagged = bad.findings.filter((f) => f.file === 'app/actions/mass-assign.ts');

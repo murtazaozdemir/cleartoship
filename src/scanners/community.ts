@@ -1,5 +1,6 @@
 import { read, rel, lineAt, snippetAt, languagesFor } from '../utils/files.js';
 import { Suppressions } from '../utils/suppress.js';
+import { adjustForPath } from '../utils/paths.js';
 import { GUARDVIBE_RULES, GUARDVIBE_ATTRIBUTION } from '../vendor/guardvibe/index.js';
 import { emptyResult } from '../types.js';
 import type { ProjectContext, ScanResult, Scanner, Severity } from '../types.js';
@@ -110,6 +111,24 @@ const SQL_VERBS = /^(query|execute|raw|sql|prepare|QueryRow|QueryContext)$/i;
 /** Words that make a string a query rather than a sentence. */
 const SQL_KEYWORDS = /\b(select|insert\s+into|update|delete\s+from|from|where|values|set)\b/i;
 
+/** Placeholder values that exist to be replaced, not to authenticate. */
+const PLACEHOLDER =
+  /^(your|my|the|a|change|changeme|replace|example|placeholder|dummy|sample|test|todo|none|null|undefined|x{3,}|\.{3}|<.*>|\$\{.*\}|process\.env)/i;
+
+/**
+ * Whether the quoted value in a `name = "value"` match reads as a credential.
+ * Prose is not: three or more words, or a trailing full stop, is a sentence.
+ */
+function looksLikeSecretValue(match: string): boolean {
+  const value = /['"]([^'"\n]*)['"]\s*$/.exec(match)?.[1];
+  if (value === undefined) return true;
+  const trimmed = value.trim();
+  if (trimmed === '' || PLACEHOLDER.test(trimmed)) return false;
+  if (trimmed.split(/\s+/).length >= 3) return false;
+  if (/[.!?]$/.test(trimmed) && trimmed.includes(' ')) return false;
+  return true;
+}
+
 /** Whether `index` falls inside a quoted string on its own line. */
 function insideStringLiteral(source: string, index: number): boolean {
   const lineStart = source.lastIndexOf('\n', index - 1) + 1;
@@ -155,6 +174,19 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
   // reporting the import as a critical. A real one is a single statement.
   VG011: (match) => (match.match(/\n/g)?.length ?? 0) <= 1,
 
+  // `sk-[A-Za-z0-9-_]{20,}` has no boundary in front of it, so the slug
+  // `best-disk-space-analyzer-mac-2026` contains an "OpenAI key" — the `sk-` in
+  // "di*sk-*space...". Real keys start at a token boundary; substrings of a word
+  // do not.
+  VG003: (_match, source, index) => index === 0 || !/[A-Za-z0-9_-]/.test(source[index - 1]!),
+
+  // Both rules key off a *name* — anything called password, secret, apiKey — and
+  // accept any string as its value, so UI copy lands as a critical:
+  // `password: "That password didn't match. Try again."` was one. A credential
+  // is an opaque token, not a sentence and not a placeholder.
+  VG001: (match) => looksLikeSecretValue(match),
+  VG062: (match) => looksLikeSecretValue(match),
+
   // "An attacker can request the entire table" is the rule's premise, and a
   // query filtered to the caller's own rows does not let them. An unbounded
   // fetch of your own data is a scalability question, not a security finding.
@@ -169,10 +201,6 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
   // here; the eval that would run it is its own match, outside the quotes.
   VG014: (_match, source, index) => !insideStringLiteral(source, index),
 };
-
-/** Paths where a match is a fixture or documentation rather than shipped code. */
-const NON_PRODUCTION_PATH =
-  /(^|\/)(tests?|__tests__|__mocks__|__fixtures__|fixtures?|spec|specs|examples?|docs?|demo|samples?|e2e|cypress|playwright|stories)(\/|$)|\.(test|spec|stories|fixture)\.[a-z]+$/i;
 
 /** Regexes over very large files are where catastrophic backtracking bites. */
 const MAX_BYTES = 400_000;
@@ -204,7 +232,6 @@ export const communityScanner: Scanner = {
       if (source === null || source.length > MAX_BYTES) continue;
 
       const relPath = rel(ctx.root, file);
-      const fixture = NON_PRODUCTION_PATH.test(relPath);
       const lockfile = LOCKFILE.test(relPath);
       const suppress = new Suppressions(source);
       filesScanned++;
@@ -234,13 +261,12 @@ export const communityScanner: Scanner = {
           const key = `${relPath}:${line}:${rule.id}`;
           if (!seen.has(key) && !suppress.suppressed(line, rule.id)) {
             seen.add(key);
+            const placed = adjustForPath(severityOf(rule.severity), relPath);
             result.findings.push({
               id: rule.id,
-              severity: fixture ? 'low' : severityOf(rule.severity),
+              severity: placed.severity,
               title: rule.name,
-              detail:
-                rule.description +
-                (fixture ? ' (Path looks like tests or docs, so the severity is reduced.)' : ''),
+              detail: rule.description + placed.note,
               fix: rule.fixCode ? `${rule.fix}\n\n${rule.fixCode}` : rule.fix,
               file: relPath,
               line,
