@@ -247,12 +247,12 @@ test('the LLM rules fire on the shape they name, and not on the safe one', async
   const byId = (id) => bad.findings.find((f) => f.id === id);
 
   // Caller text interpolated into the system message.
-  assert.equal(byId('CTS080').meta.llm, 'LLM01:2025 - Prompt Injection');
+  assert.equal(byId('CTS080').meta.llm, 'LLM01:2026 - Prompt Injection');
   assert.equal(byId('CTS080').file, 'app/ai/assistant.ts');
   // No max_tokens on a request-reachable model call.
-  assert.equal(byId('CTS081').meta.llm, 'LLM10:2025 - Unbounded Consumption');
+  assert.equal(byId('CTS081').meta.llm, 'LLM06:2026 - Unbounded Consumption');
   // A system prompt in a 'use client' module.
-  assert.equal(byId('CTS082').meta.llm, 'LLM07:2025 - System Prompt Leakage');
+  assert.equal(byId('CTS082').meta.llm, 'LLM08:2026 - Hidden Context Exposure');
   assert.equal(byId('CTS082').file, 'app/ai/panel.tsx');
 
   // The clean fixture calls the same API with the caller's text as a separate
@@ -280,7 +280,7 @@ test('findings carry one OWASP taxonomy, plus an LLM category where it applies',
   // A hardcoded provider key is an LLM finding as well as a web one; an npm
   // install hook that shells out is not, however much it looks like a "hook".
   const key = result.findings.find((f) => f.id === 'CTS030' && /OpenAI/.test(f.title));
-  assert.equal(key.meta.llm, 'LLM02:2025 - Sensitive Information Disclosure');
+  assert.equal(key.meta.llm, 'LLM02:2026 - Sensitive Information Disclosure');
   const hook = result.findings.find((f) => f.id === 'CTS028');
   assert.equal(hook.meta?.llm, undefined, 'a postinstall hook is supply chain, not excessive agency');
 });

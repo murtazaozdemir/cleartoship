@@ -65,18 +65,28 @@ export function normaliseOwasp(raw: string | undefined): string | null {
   return null;
 }
 
-/** OWASP Top 10 for LLM Applications (2025). */
+/**
+ * OWASP Top 10 for LLM Applications, **2026 edition** (published 4 August 2026).
+ *
+ * The renumbering is not cosmetic and it is easy to ship stale: Excessive Agency
+ * moved 06 → 03, Unbounded Consumption 10 → 06, Improper Output Handling 05 →
+ * 10, Misinformation 09 → 07, and System Prompt Leakage was renamed and
+ * broadened into **Hidden Context Exposure** at 08. Only LLM01 and LLM02 kept
+ * their numbers. Eight of ten identifiers change between editions, so anything
+ * that hard-codes them dates fast — which is why the mapping below keys off
+ * category *names*, and only the label carries the number.
+ */
 export const OWASP_LLM = {
-  LLM01: 'LLM01:2025 - Prompt Injection',
-  LLM02: 'LLM02:2025 - Sensitive Information Disclosure',
-  LLM03: 'LLM03:2025 - Supply Chain',
-  LLM04: 'LLM04:2025 - Data and Model Poisoning',
-  LLM05: 'LLM05:2025 - Improper Output Handling',
-  LLM06: 'LLM06:2025 - Excessive Agency',
-  LLM07: 'LLM07:2025 - System Prompt Leakage',
-  LLM08: 'LLM08:2025 - Vector and Embedding Weaknesses',
-  LLM09: 'LLM09:2025 - Misinformation',
-  LLM10: 'LLM10:2025 - Unbounded Consumption',
+  LLM01: 'LLM01:2026 - Prompt Injection',
+  LLM02: 'LLM02:2026 - Sensitive Information Disclosure',
+  LLM03: 'LLM03:2026 - Excessive Agency',
+  LLM04: 'LLM04:2026 - Supply Chain',
+  LLM05: 'LLM05:2026 - Data and Model Poisoning',
+  LLM06: 'LLM06:2026 - Unbounded Consumption',
+  LLM07: 'LLM07:2026 - Misinformation',
+  LLM08: 'LLM08:2026 - Hidden Context Exposure',
+  LLM09: 'LLM09:2026 - Vector and Embedding Weaknesses',
+  LLM10: 'LLM10:2026 - Improper Output Handling',
 } as const;
 
 /**
@@ -91,13 +101,19 @@ const LLM_RULES: [RegExp, string][] = [
   // handling the output, even though its description discusses injection.
   [
     /(llm|ai|model) output[^.]{0,60}(unescaped|innerhtml|dangerouslysetinnerhtml|render|eval|exec|sink|shell|command|markdown)|(unescaped|unsanitised|unsanitized)[^.]{0,30}(llm|ai|model) output/i,
-    OWASP_LLM.LLM05,
+    OWASP_LLM.LLM10,
   ],
   [
     /prompt injection|injected instruction|hidden instruction|jailbreak|(tool|skill) (description|definition)[^.]{0,40}(instruction|encoded|obfuscat|inject)|untrusted content into (the )?prompt/i,
     OWASP_LLM.LLM01,
   ],
-  [/system prompt[^.]{0,40}(leak|expos|client|bundle|browser)/i, OWASP_LLM.LLM07],
+  // 2026 broadened "System Prompt Leakage" into Hidden Context Exposure: the
+  // guidance is that nothing in the context window is a secret, so retrieved
+  // context and tool output belong here alongside the system prompt.
+  [
+    /(system prompt|hidden context|context window)[^.]{0,40}(leak|expos|client|bundle|browser|discoverab)/i,
+    OWASP_LLM.LLM08,
+  ],
   [
     // A hardcoded provider key is disclosure wherever it sits, so no exposure
     // word is required after a *named* provider. The generic "llm"/"ai" wording
@@ -105,23 +121,23 @@ const LLM_RULES: [RegExp, string][] = [
     /(openai|anthropic|gemini|claude|mistral|cohere|huggingface|replicate|groq|perplexity|xai|pinecone)[^.]{0,40}(api[ _-]?key|token|secret)|(llm|\bai\b)[^.]{0,40}(api[ _-]?key|token|secret)[^.]{0,40}(expos|public|client|browser|bundle)|base_?url[^.]{0,40}(non-|redirect)|dangerouslyallowbrowser/i,
     OWASP_LLM.LLM02,
   ],
-  [/(mcp|model|agent)[^.]{0,40}(@latest|unpinned|unverified|untrusted (source|registry))/i, OWASP_LLM.LLM03],
+  [/(mcp|model|agent)[^.]{0,40}(@latest|unpinned|unverified|untrusted (source|registry))/i, OWASP_LLM.LLM04],
   [
     // "Hook" is overloaded: an npm `postinstall` hook that shells out is a
     // supply-chain finding, not an agent given too much authority. The AI
     // context has to be in the text.
     /auto[- ]?approve|allowedtools|excessive agency|(mcp|agent|assistant|settings|claude|ai)[- ]?(config|hook|tool)[^.]{0,60}(execut|pipes|network|write|permissive|broad|access)|permission prompt[^.]{0,40}(bypass|skip)|overly (broad|permissive)[^.]{0,30}tool/i,
-    OWASP_LLM.LLM06,
+    OWASP_LLM.LLM03,
   ],
   // "Embedding media" is not a vector embedding — matching the bare word put a
   // TinyMCE XSS rule in this category.
   [
     /vector (store|database|db|index|search)\b|\bembeddings\b|embedding (vector|model|store)|\brag\b[^.]{0,30}(poison|inject)/i,
-    OWASP_LLM.LLM08,
+    OWASP_LLM.LLM09,
   ],
   [
     /(llm|ai|model|token)[^.]{0,40}(unbounded|no (rate|token) limit|runaway|budget)|unbounded consumption/i,
-    OWASP_LLM.LLM10,
+    OWASP_LLM.LLM06,
   ],
 ];
 

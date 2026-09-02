@@ -84,8 +84,8 @@ reaches a manifest.
 | Rule | Severity | What it catches |
 | --- | --- | --- |
 | **CTS080** | high | Caller-supplied text interpolated into the instruction text itself — prompt injection by construction, not by filter (LLM01) |
-| **CTS081** | medium | A request-reachable model call with no `max_tokens` ceiling: the answer's length, and its bill, chosen by whoever wrote the input (LLM10) |
-| **CTS082** | medium | A system prompt in a `'use client'` module — compiled into the bundle, readable in devtools (LLM07) |
+| **CTS081** | medium | A request-reachable model call with no `max_tokens` ceiling: the answer's length, and its bill, chosen by whoever wrote the input (LLM06) |
+| **CTS082** | medium | A system prompt in a `'use client'` module — compiled into the bundle, readable in devtools (LLM08) |
 
 **Logging, error-handling & deserialization** — the detectable slices of A08/A09/A10
 
@@ -147,53 +147,37 @@ A05 112, A04 78, A02 59, A03 32, A07 17, A06 13, A08 11, A09 2. ClearToShip's
 own 45 rules add A01 19, A03 9, A04 7, A08 3, A05 2, and one each for A07, A09
 and A10 — which is the category no vendored rule reaches.
 
-## OWASP Top 10 for LLM Applications — coverage
+## OWASP Top 10 for LLM Applications (2026) — coverage
 
 Worth stating separately, because "we cover the OWASP Top 10" and "we cover the
-LLM Top 10" are different claims and only one of them is usually meant. **41
-vendored rules map to 7 of the 10 LLM categories**, and first-party findings
-join them when the finding itself names a provider — a hardcoded OpenAI key
-(CTS030), an AI client configured to run in the browser (CTS045).
+LLM Top 10" are different claims and only one of them is usually meant. Mapped
+against the **2026 edition**, published 4 August 2026 — which renumbered eight
+of the ten: Excessive Agency moved 06 → 03, Unbounded Consumption 10 → 06,
+Improper Output Handling 05 → 10, and System Prompt Leakage was renamed and
+broadened into **Hidden Context Exposure**.
 
 | Category | Rules | What we detect |
 | --- | --- | --- |
 | **LLM01** Prompt Injection | 12 + **CTS080** | Caller text interpolated into the instruction text itself; fetched pages and query results reaching a prompt unbounded; instructions hidden in a tool description |
 | **LLM02** Sensitive Information Disclosure | 11 (+ CTS030, CTS045) | Provider keys in client code or a `NEXT_PUBLIC_` variable, `dangerouslyAllowBrowser`, a base URL pointed at somebody else's endpoint |
-| **LLM06** Excessive Agency | 9 | MCP servers with permissive tool access, `allowedTools` wildcards, auto-approve bypassing the permission prompt, settings hooks that fetch or pipe |
-| **LLM05** Improper Output Handling | 4 | Model output rendered as raw HTML or markdown images, or used in a dangerous sink |
-| **LLM08** Vector & Embedding Weaknesses | 3 | Retrieval results interpolated into a prompt, unauthenticated vector upserts |
-| **LLM03** Supply Chain | 1 | MCP server pinned to `@latest` |
-| **LLM07** System Prompt Leakage | 1 + **CTS082** | A system prompt held in a `'use client'` module, so it ships in the bundle; a prompt returned in an error response |
-| **LLM10** Unbounded Consumption | **CTS081** | A request-reachable model call with no `max_tokens` ceiling — the answer's length, and its cost, decided by whoever wrote the input |
-| **LLM04** Data & Model Poisoning | — | Needs training-pipeline and dataset provenance. Nothing in a web app's source tree answers it, and a rule that pretended otherwise would be box-checking |
-| **LLM09** Misinformation | — | A property of what the model says, not of the code that calls it. The adjacent detectable case — model output driving a security decision — would be a real rule, and is not written yet |
+| **LLM03** Excessive Agency | 9 | MCP servers with permissive tool access, `allowedTools` wildcards, auto-approve bypassing the permission prompt, settings hooks that fetch or pipe |
+| **LLM04** Supply Chain | 1 | MCP server pinned to `@latest` |
+| **LLM06** Unbounded Consumption | **CTS081** | A request-reachable model call with no `max_tokens` ceiling — the answer's length, and its cost, decided by whoever wrote the input |
+| **LLM08** Hidden Context Exposure | 1 + **CTS082** | A system prompt held in a `'use client'` module, so it ships in the bundle; a prompt returned in an error response |
+| **LLM09** Vector & Embedding Weaknesses | 3 | Retrieval results interpolated into a prompt, unauthenticated vector upserts |
+| **LLM10** Improper Output Handling | 4 | Model output rendered as raw HTML or markdown images, or used in a dangerous sink |
+| **LLM05** Data & Model Poisoning | — | Needs training-pipeline and dataset provenance. Nothing in a web app's source tree answers it, and a rule that pretended otherwise would be box-checking |
+| **LLM07** Misinformation | — | A property of what the model says, not of the code that calls it. The adjacent detectable case — model output driving a security decision — would be a real rule, and is not written yet |
 
 The mapping is derived from each rule's own text rather than a hand-kept list of
 ids, so re-vendoring upstream cannot silently drop it, and it is deliberately
 conservative: a rule that does not clearly belong to a category gets none.
 
 **Eight of ten have first-party or vendored detection. Two do not, and will not
-get a rule for the sake of the table** — LLM04 needs artefacts that are not in
-the repository, and LLM09 is about the truthfulness of an answer. A tool that
+get a rule for the sake of the table** — LLM05 needs artefacts that are not in
+the repository, and LLM07 is about the truthfulness of an answer. A tool that
 claimed those would be lying about what it checked, which is the failure mode
 this project exists to avoid.
-
-Two honest points a reviewer would raise, answered up front:
-
-- **A06 and A09 are hard for _any_ static tool.** A06 (Insecure Design) is about
-  missing threat modeling — you cannot grep for "the developer didn't consider an
-  abuse case." A09 (Logging failures) is largely a runtime/ops concern. Semgrep,
-  Snyk and CodeQL have the same limits. ClearToShip covers the *detectable slices*
-  (secrets in logs, fail-open error handling) and is honest that the rest needs a
-  human threat model and runtime observability, not a scanner.
-- **Coverage is uneven on purpose.** The thesis is "the gaps LLM-generated code
-  leaves," which cluster in A01/A03/A07/A04 — so that is where the rules cluster.
-
-Running with `--no-community` (first-party rules only) covers **8 of 10**
-categories directly (A01, A03, A04, A05, A07, A08, A09, A10); the community pack
-adds A02 and broadens A05/A07.
-
-
 
 ## Usage
 

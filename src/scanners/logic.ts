@@ -4,6 +4,7 @@ import { parseSource, calleeName, calleeTail } from '../utils/ast.js';
 import { traverse } from '../utils/traverse.js';
 import { Suppressions } from '../utils/suppress.js';
 import { emptyResult } from '../types.js';
+import { OWASP_LLM } from '../utils/owasp.js';
 import type { Finding, ProjectContext, ScanResult, Scanner } from '../types.js';
 
 /**
@@ -205,7 +206,7 @@ export const logicScanner: Scanner = {
             line: path.node.loc?.start.line ?? 0,
             cwe: 'CWE-200: Exposure of Sensitive Information to an Unauthorized Actor',
             owasp: 'A04:2025 - Cryptographic Failures',
-            meta: { llm: 'LLM07:2025 - System Prompt Leakage', binding: name },
+            meta: { llm: OWASP_LLM.LLM08, binding: name },
           });
         },
 
@@ -238,7 +239,7 @@ export const logicScanner: Scanner = {
                 line: node.loc?.start.line ?? 0,
                 cwe: 'CWE-770: Allocation of Resources Without Limits or Throttling',
                 owasp: 'A06:2025 - Insecure Design',
-                meta: { llm: 'LLM10:2025 - Unbounded Consumption', call: full },
+                meta: { llm: OWASP_LLM.LLM06, call: full },
               });
             }
           }
@@ -272,7 +273,7 @@ export const logicScanner: Scanner = {
                   line: expr.loc?.start.line ?? value.loc?.start.line ?? 0,
                   cwe: 'CWE-1427: Improper Neutralization of Input Used for LLM Prompting',
                   owasp: 'A05:2025 - Injection',
-                  meta: { llm: 'LLM01:2025 - Prompt Injection', source: root },
+                  meta: { llm: OWASP_LLM.LLM01, source: root },
                 });
                 return;
               }
