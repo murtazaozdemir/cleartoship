@@ -242,6 +242,25 @@ test('mass assignment is the payload arriving whole, not any write of caller inp
   );
 });
 
+test('rules naming a platform the project does not use are not run', async () => {
+  // The fixture has no Supabase or Firebase dependency. "Supabase Auth Missing
+  // Middleware" was being reported against a real app with neither.
+  const result = await scan({ root: INDIRECT, offline: true });
+  const note = result.checks.find((c) => c.label.startsWith('Community ruleset'))?.note ?? '';
+  assert.match(note, /Supabase rules \(no Supabase dependency\)/);
+  assert.match(note, /Firebase rules \(no Firebase dependency\)/);
+  assert.equal(
+    result.findings.some((f) => /supabase|firebase/i.test(f.title)),
+    false,
+  );
+
+  // The clean fixture does depend on Supabase, so those rules stay switched on.
+  const withSupabase = await scan({ root: CLEAN, offline: true });
+  const cleanNote =
+    withSupabase.checks.find((c) => c.label.startsWith('Community ruleset'))?.note ?? '';
+  assert.equal(/Supabase rules/.test(cleanNote), false, 'not skipped where it applies');
+});
+
 test('the LLM rules fire on the shape they name, and not on the safe one', async () => {
   const bad = await scan({ root: VULNERABLE, offline: true });
   const byId = (id) => bad.findings.find((f) => f.id === id);

@@ -66,6 +66,7 @@ export interface FrameworkInfo {
   stripe: boolean;
   python: boolean;
   reactNative: boolean;
+  firebase: boolean;
   /** Human-readable one-liner for the CLI header. */
   describe(): string;
 }

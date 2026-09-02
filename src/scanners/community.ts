@@ -282,6 +282,25 @@ const MATCH_GUARDS: Record<
       source,
     ),
 
+  // `jwt.sign(payload, getJwtSecret(), { expiresIn: TOKEN_EXPIRY })` was
+  // reported as a token without expiry: the pattern's `[^)]` scan for
+  // `expiresIn` stops at the first `)`, which here belongs to `getJwtSecret()`.
+  // Read the whole call before saying the option is absent.
+  VG061: (_match, source, index) =>
+    !/\b(expiresIn|exp\s*:|setExpirationTime)\b/.test(source.slice(index, index + 300)),
+
+  // The "sink" half of the upload rule matched the word *upload* inside a
+  // sentence — "Please upload a CSV file exported from Shopify". A filename
+  // reaching a string is not a filename reaching a filesystem.
+  VG993: (match, source, index, spans) => !isInside(spans, index + match.length - 1, 'string'),
+
+  // A login endpoint is server code. This fired on `<Link href="/login">Back to
+  // sign in</Link>` in a client page, where "verify" and "login" are words in
+  // markup rather than a password comparison behind an HTTP handler.
+  VG148: (match, source) =>
+    !/^\s*(['"])use client\1/m.test(source.slice(0, 400)) &&
+    /(bcrypt\.compare|argon2\.verify|\b(compare|verify|verifyPassword)\s*\()/.test(match),
+
   // SSRF is a *server* being made to fetch a URL it should not. A module marked
   // `'use client'` runs in the browser, where the request leaves the user's own
   // machine and crosses no trust boundary of yours.
@@ -335,6 +354,24 @@ function inapplicable(ctx: ProjectContext): { ids: ReadonlySet<string>; why: str
   if (ctx.framework.nextjs !== null) {
     ids.add('VG132');
     why.push('VG132 body-size limit (Next.js sets one by default)');
+  }
+
+  // A rule that names a platform cannot apply to a project that does not use
+  // it. "Supabase Auth Missing Middleware" was reported against an app with no
+  // Supabase dependency at all — advice about a library it does not import.
+  for (const [name, present, keyword] of [
+    ['Supabase', ctx.framework.supabase, /supabase/i],
+    ['Firebase', ctx.framework.firebase, /firebase|firestore/i],
+  ] as const) {
+    if (present) continue;
+    let n = 0;
+    for (const rule of GUARDVIBE_RULES) {
+      if (keyword.test(rule.name) || keyword.test(rule.description)) {
+        ids.add(rule.id);
+        n++;
+      }
+    }
+    if (n > 0) why.push(`${n} ${name} rules (no ${name} dependency)`);
   }
 
   return { ids, why };

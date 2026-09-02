@@ -65,6 +65,11 @@ export function detectFramework(root: string, files: string[]): FrameworkInfo {
       exists(join(root, 'requirements.txt')) ||
       exists(join(root, 'pyproject.toml')),
     reactNative,
+    firebase:
+      hasDep(pkg, 'firebase') ||
+      hasDep(pkg, 'firebase-admin') ||
+      hasDep(pkg, '@firebase/app') ||
+      exists(join(root, 'firebase.json')),
     describe() {
       const parts: string[] = [];
       if (this.nextjs === 'app-router') parts.push('Next.js (App Router)');
@@ -78,6 +83,7 @@ export function detectFramework(root: string, files: string[]): FrameworkInfo {
       if (this.stripe) parts.push('Stripe');
       if (this.python) parts.push('Python');
       if (this.reactNative) parts.push('React Native');
+      if (this.firebase) parts.push('Firebase');
       return parts.length ? parts.join(' + ') : 'generic JavaScript/TypeScript';
     },
   };
