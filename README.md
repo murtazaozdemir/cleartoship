@@ -303,6 +303,12 @@ uploaded, and no database is connected to.
   call chained to it, and stand down when the values are bound. They still fire
   when any interpolation reads from the request, so a query that binds one value
   and concatenates another is reported.
+- **The scan stays inside the directory you pointed at.** A symlink that
+  resolves outside the scan root is not followed. It sounds academic until you
+  run this in CI on a pull request: `vendor-config -> /home/runner/.ssh` would
+  otherwise be read, and quoted, into a public comment. Symlink loops are walked
+  once rather than a dozen times, and the report says how many links were
+  refused.
 - **A match in a comment is prose about code, not code.** The scanner lexes each
   file once for strings and comments — properly, tracking quotes, so a URL
   inside a string is not mistaken for the start of one — and a community rule

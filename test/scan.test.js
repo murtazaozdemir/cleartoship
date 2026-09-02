@@ -239,6 +239,25 @@ test('mass assignment is the payload arriving whole, not any write of caller inp
   );
 });
 
+test('the scan stays inside the directory it was given', async () => {
+  const result = await scan({ root: INDIRECT, offline: true });
+
+  // `escape` points at the vulnerable fixture, which is full of findings.
+  assert.equal(
+    result.findings.some((f) => f.file?.startsWith('escape/')),
+    false,
+    'a symlink out of the tree is not followed — its contents are not this project',
+  );
+  // `self` points at the fixture root: walking it again would report every
+  // file twice, at two different paths.
+  assert.equal(
+    result.findings.some((f) => f.file?.startsWith('self/')),
+    false,
+    'and a symlink loop is walked once',
+  );
+  assert.ok(result.escapingSymlinkCount >= 1, 'the report says how many were refused');
+});
+
 test('what git ignores is not part of the project', async () => {
   const result = await scan({ root: INDIRECT, offline: true });
   const files = result.findings.map((f) => f.file);

@@ -22,7 +22,7 @@ supported one; older versions are not backported.
 | **Never writes to the scanned project** | The only writes in the codebase are the report file you ask for with `--output <path>` and the registry cache. Verify: `grep -rn "writeFileSync\|mkdirSync\|rmSync\|unlink" src/ --exclude-dir=vendor` — five lines, of which two are imports and three are those call sites. Neither path is derived from the scan root. |
 | **Never executes your code** | The scanner has no `child_process`, `exec`, `spawn`, `eval`, `new Function`, or dynamic `import()` of scanned files. Your code is read as text, parsed by Babel into an AST, and matched against regexes. Verify: `grep -rn "child_process\|execSync\|spawn\|eval(\|new Function" src/ --exclude-dir=vendor` — one hit, and it is a *pattern string* in the rule that detects those calls in **your** install hooks. (Drop `--exclude-dir=vendor` and the extra hits are rule text in the vendored ruleset, matched against your code, never run.) |
 | **Never connects to your database** | The Row Level Security scanner replays your `.sql` migration files to model the resulting schema. There is no database driver in the dependency tree and no connection string is ever read. |
-| **Reads only what it scans** | Files are gathered by walking the scan root, skipping `node_modules`, build output, virtualenvs and anything your own `.gitignore` excludes. Ignore rules are read from the scan root downwards only — never from a parent directory — so nothing outside the root is read except the cache directory. |
+| **Reads only what it scans** | Files are gathered by walking the scan root, skipping `node_modules`, build output, virtualenvs and anything your own `.gitignore` excludes. Ignore rules are read from the scan root downwards only — never from a parent directory. **A symlink that resolves outside the root is not followed**, so a repository cannot make the scanner read `~/.ssh` and quote it back into a report; the count of refused links appears in the output. Nothing outside the root is read except the cache directory. |
 
 ## What leaves your machine
 
@@ -65,6 +65,9 @@ are visible in the diff and cannot change under you between releases:
   categories no static scanner can reach.
 - **Not a sandbox.** It reads whatever you point it at. Pointing it at a
   repository you do not trust is as safe as opening that repository in an
-  editor — no more, and no less.
+  editor — no more, and no less. What it will not do is read *beyond* what you
+  pointed it at: symlinks out of the tree are refused, and a malformed pattern
+  in the repository's own `.gitignore` is skipped rather than allowed to end
+  the scan.
 - **Not a secret scanner of record.** Secrets already committed to git history
   are out of scope; ClearToShip reads the working tree, not past commits.

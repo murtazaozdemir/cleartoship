@@ -1,4 +1,4 @@
-import { readdirSync, statSync, readFileSync, existsSync } from 'node:fs';
+import { readdirSync, statSync, readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { Gitignore, extendedAt, repositoryExcludes } from './gitignore.js';
 
@@ -61,6 +61,8 @@ export interface WalkResult {
   files: string[];
   /** How many paths were left out because the repository ignores them. */
   gitIgnored: number;
+  /** How many symlinks pointed outside the scan root and were not followed. */
+  escapingSymlinks: number;
 }
 
 /**
@@ -78,6 +80,26 @@ export function walk(root: string, options: { respectGitignore?: boolean } = {})
     ? extendedAt(repositoryExcludes(root, read), root, read)
     : Gitignore.empty();
   const stack: { dir: string; rules: Gitignore }[] = [{ dir: root, rules: rootRules }];
+  // A symlinked directory that points back into the tree — `self -> .`, or the
+  // A→B→A pair a workspace layout can produce — otherwise gets walked again on
+  // every pass, reporting the same file at a dozen different paths. Resolving
+  // each directory once and remembering it costs one syscall per directory.
+  const visited = new Set<string>();
+  let escapingSymlinks = 0;
+
+  // A symlink that leaves the tree is not part of the project, and following one
+  // would be worse than useless: `vendor-config -> /home/runner/.ssh` makes the
+  // scanner read that directory and quote what it finds — into a pull-request
+  // comment, in the Action. So the scan stays inside what it was pointed at.
+  let rootReal: string;
+  try {
+    rootReal = realpathSync(root);
+  } catch {
+    rootReal = root;
+  }
+  visited.add(rootReal);
+  const insideRoot = (real: string): boolean =>
+    real === rootReal || real.startsWith(rootReal.endsWith('/') ? rootReal : rootReal + '/');
 
   while (stack.length) {
     const { dir, rules } = stack.pop()!;
@@ -95,8 +117,21 @@ export function walk(root: string, options: { respectGitignore?: boolean } = {})
       } catch {
         continue;
       }
+      let real: string;
+      try {
+        real = realpathSync(full);
+      } catch {
+        continue;
+      }
+      if (!insideRoot(real)) {
+        escapingSymlinks++;
+        continue;
+      }
+
       if (st.isDirectory()) {
         if (SKIP_DIRS.has(entry)) continue;
+        if (visited.has(real)) continue;
+        visited.add(real);
         // git never descends into an ignored directory, and neither do we —
         // which is also where most of the saving comes from.
         if (respect && rules.ignores(full, true)) {
@@ -126,7 +161,7 @@ export function walk(root: string, options: { respectGitignore?: boolean } = {})
       }
     }
   }
-  return { files: found.sort(), gitIgnored };
+  return { files: found.sort(), gitIgnored, escapingSymlinks };
 }
 
 export function read(file: string): string | null {

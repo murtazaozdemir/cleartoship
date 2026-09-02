@@ -29,6 +29,8 @@ export interface FullScan {
   fileCount: number;
   /** Paths left unscanned because the repository's own ignore rules exclude them. */
   gitIgnoredCount: number;
+  /** Symlinks that pointed outside the scan root and were not followed. */
+  escapingSymlinkCount: number;
   findings: Finding[];
   checks: CheckSummary[];
   warnings: string[];
@@ -44,6 +46,7 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
   const walked = roots.map((r) => walk(r, { respectGitignore: !options.noGitignore }));
   const files = [...new Set(walked.flatMap((w) => w.files))];
   const gitIgnoredCount = walked.reduce((n, w) => n + w.gitIgnored, 0);
+  const escapingSymlinkCount = walked.reduce((n, w) => n + w.escapingSymlinks, 0);
   const framework = detectFramework(root, files);
 
   const ctx: ProjectContext = {
@@ -116,6 +119,16 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
     });
   }
 
+  if (escapingSymlinkCount > 0) {
+    checks.push({
+      label: `Symlinks leaving the scan root not followed (${escapingSymlinkCount})`,
+      passed: true,
+      note:
+        'they point outside the directory you asked about, so their contents are not ' +
+        'this project and are never read or quoted in this report',
+    });
+  }
+
   const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const f of filtered) counts[f.severity]++;
 
@@ -124,6 +137,7 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
     framework: framework.describe(),
     fileCount: files.length,
     gitIgnoredCount,
+    escapingSymlinkCount,
     findings: filtered,
     checks,
     warnings,

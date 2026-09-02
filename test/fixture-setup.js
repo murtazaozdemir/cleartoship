@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, symlinkSync, rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -76,6 +76,20 @@ export function buildFixtures() {
     join(INDIRECT, '.env'),
     ['STRIPE_SECRET_KEY=sk_live_51NqAbCdEfGhIjKlMnOpQrStU', ''].join('\n'),
   );
+
+  // Two symlinks the walk has to refuse. `escape` leaves the fixture entirely —
+  // following it would read a directory the scan was not pointed at, and quote
+  // what it found into the report. `self` points at its own parent, which used
+  // to be walked again on every pass.
+  for (const link of ['escape', 'self']) {
+    try {
+      rmSync(join(INDIRECT, link), { force: true });
+    } catch {
+      /* not there yet */
+    }
+  }
+  symlinkSync(VULNERABLE, join(INDIRECT, 'escape'), 'dir');
+  symlinkSync(INDIRECT, join(INDIRECT, 'self'), 'dir');
 
   // A bare directory is enough: the scanner only checks that one exists.
   for (const root of [VULNERABLE, CLEAN, INDIRECT]) {

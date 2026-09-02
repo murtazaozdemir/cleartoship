@@ -127,6 +127,7 @@ export function renderJson(scan: FullScan): string {
       framework: scan.framework,
       fileCount: scan.fileCount,
       gitIgnoredCount: scan.gitIgnoredCount,
+      escapingSymlinkCount: scan.escapingSymlinkCount,
       durationMs: scan.durationMs,
       verdict:
         scan.counts.critical > 0 ? 'hold' : scan.counts.high > 0 ? 'conditional' : 'clear',
