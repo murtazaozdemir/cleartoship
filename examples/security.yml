@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: murtazaozdemir/cleartoship@v0.10.4
+      - uses: murtazaozdemir/cleartoship@v0.11.0
         with:
           fail-on: critical   # block the PR only on criticals
           comment: true        # post a summary comment on the PR
