@@ -17,6 +17,21 @@ supported one; older versions are not backported.
 
 ## What it does to your project
 
+**You do not need access to the source repository to check any of this.** The
+published package contains the code that actually runs:
+
+```bash
+npm pack cleartoship && tar xzf cleartoship-*.tgz   # gives you package/dist
+```
+
+The greps in the table below are written against `src/`. Run the same greps
+against `package/dist` and they answer the same question — every hit that comes
+back is a comment, a regex pattern string or the text of a rule that is *matched
+against your code*, never a call site. That is worth checking rather than
+believing: a scanner that looks for `eval` necessarily contains the word `eval`,
+and the difference between naming a dangerous call and making one is the whole
+claim.
+
 | Guarantee | Why it holds |
 | --- | --- |
 | **Never writes to the scanned project** | The only writes in the codebase are the report file you ask for with `--output <path>` and the registry cache. Verify: `grep -rn "writeFileSync\|mkdirSync\|rmSync\|unlink" src/ --exclude-dir=vendor` — five lines, of which two are imports and three are those call sites. Neither path is derived from the scan root. |

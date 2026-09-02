@@ -57,8 +57,11 @@ test('vulnerable fixture: reports every rule it is built to trigger', async () =
     'CTS051', // storage policy allows listing every object
     'CTS052', // SECURITY DEFINER function callable by anon
     'CTS080', // caller text concatenated into a prompt (LLM01)
-    'CTS081', // model call with no token ceiling (LLM10)
-    'CTS082', // system prompt shipped to the browser (LLM07)
+    'CTS081', // model call with no token ceiling (LLM06)
+    'CTS082', // system prompt shipped to the browser (LLM08)
+    'CTS083', // agent tool takes an irreversible action, ungated (LLM03)
+    'CTS084', // model output reaching a sink that runs it (LLM10)
+    'CTS085', // a security decision made from the model's answer (LLM07)
   ]) {
     assert.ok(found.has(expected), `expected ${expected} to be reported`);
   }
@@ -276,6 +279,49 @@ test('the LLM rules fire on the shape they name, and not on the safe one', async
 
   // The clean fixture calls the same API with the caller's text as a separate
   // user message and a ceiling on the answer. Nothing to report.
+  const clean = await scan({ root: CLEAN, offline: true });
+  assert.deepEqual(clean.findings.map((f) => `${f.id} ${f.file}`), []);
+});
+
+test('the agent rules fire on the shape they name, and stand down on the gated one', async () => {
+  const bad = await scan({ root: VULNERABLE, offline: true });
+  const only = (id) => bad.findings.filter((f) => f.id === id);
+
+  // LLM03 — an irreversible tool body the model reaches on its own. Both
+  // spellings: the object literal, and MCP's separate handler argument.
+  const agency = only('CTS083');
+  assert.deepEqual(agency.map((f) => f.meta.tool).sort(), ['purgeWorkspace', 'run_maintenance']);
+  assert.ok(agency.every((f) => f.meta.llm === 'LLM03:2026 - Excessive Agency'));
+  // The same delete behind a confirmation is not excessive agency, and a
+  // read-only tool never was.
+  assert.ok(!agency.some((f) => f.meta.tool === 'archiveWorkspace'), 'a gated tool is not reported');
+  assert.ok(!agency.some((f) => f.meta.tool === 'listWorkspaces'), 'a read-only tool is not reported');
+
+  // LLM10 — the point where the answer stops being text.
+  const output = only('CTS084');
+  assert.deepEqual(output.map((f) => f.meta.sink).sort(), [
+    'dangerouslySetInnerHTML',
+    'execSync',
+    'new Function',
+  ]);
+  assert.equal(
+    output.filter((f) => f.severity === 'critical').length,
+    2,
+    'the eval-class sinks are critical; rendering as HTML is high',
+  );
+  assert.ok(output.every((f) => f.meta.llm === 'LLM10:2026 - Improper Output Handling'));
+
+  // LLM07 — the answer is believed. Both shapes: the branch that turns on it,
+  // and the check that hands the verdict straight back.
+  const decision = only('CTS085');
+  assert.equal(decision.length, 2);
+  assert.ok(decision.every((f) => f.meta.llm === 'LLM07:2026 - Misinformation'));
+  assert.ok(decision.every((f) => f.file === 'lib/agent/triage.ts'));
+  // Branching on the *length* of an answer decides nothing about access.
+  assert.ok(!decision.some((f) => f.line > 30), 'summarise() must not be flagged');
+
+  // The clean fixture writes all three correctly — a gated tool, an answer
+  // rendered as text, an access check made against the database — and is silent.
   const clean = await scan({ root: CLEAN, offline: true });
   assert.deepEqual(clean.findings.map((f) => `${f.id} ${f.file}`), []);
 });

@@ -1,18 +1,36 @@
 # ClearToShip
 
-> The 30-second pre-launch security clearance for AI-built & vibe-coded apps.
+> The 30-second pre-launch security clearance for AI-built apps — including the agent
+> surface a runtime scanner cannot reach until after you have already deployed it.
 
 AI coding assistants write code fast, but they optimise for *"runs without errors"*, not
 *"runs without leaks"*. The failure mode is almost never a dangerous line of code — it's an
 **absent** one: the session check that was never written, the RLS policy that was never
-enabled, the package name the model invented.
+enabled, the package name the model invented, the approval step the agent tool never had.
 
 `cleartoship` is a static pre-flight check for exactly those gaps. No database connection, no
 account, no upload — it reads your repo and exits non-zero if you shouldn't deploy.
 
+### Where this is not like the other scanners
+
+The serious LLM security tools are **runtime**: they probe a deployed endpoint and report how
+it answered. That is a real and different job, and this does not compete with it. What none of
+them does is read your *source*, before it ships, and tell you that the system prompt is
+compiled into the client bundle, that the model call has no token ceiling, that the agent tool
+which deletes rows has nothing asking a person first, or that an answer is being used as the
+access check.
+
+Six first-party rules read that surface directly, mapped to the **2026** OWASP LLM Top 10 —
+and the coverage table below names the one category this refuses to fake. Everything else here
+is the ordinary web surface, which is table stakes: you still ship on the same day that a
+missing RLS policy would have leaked the table.
+
 ```bash
 npx cleartoship
 ```
+
+**Free while in beta** — no account, no key, no tier. It runs on your machine and
+reports to your terminal.
 
 ## What it checks
 
@@ -86,6 +104,9 @@ reaches a manifest.
 | **CTS080** | high | Caller-supplied text interpolated into the instruction text itself — prompt injection by construction, not by filter (LLM01) |
 | **CTS081** | medium | A request-reachable model call with no `max_tokens` ceiling: the answer's length, and its bill, chosen by whoever wrote the input (LLM06) |
 | **CTS082** | medium | A system prompt in a `'use client'` module — compiled into the bundle, readable in devtools (LLM08) |
+| **CTS083** | high | An agent tool the model may call on its own whose body **cannot be taken back** — deletes rows, moves money, sends mail, runs a shell — with nothing asking a person first (LLM03) |
+| **CTS084** | critical/high | The model's own answer traced into a sink that *runs* it: `eval`, `new Function`, a shell, raw SQL, `innerHTML`, `dangerouslySetInnerHTML` (LLM10) |
+| **CTS085** | high | A branch or a check that turns on what the model returned — the guess decides access (LLM07) |
 
 **Logging, error-handling & deserialization** — the detectable slices of A08/A09/A10
 
@@ -144,7 +165,7 @@ it is strongest exactly where AI-generated code fails. Coverage by category:
 
 Counts, measured across the vendored ruleset after normalisation: A01 121,
 A05 112, A04 78, A02 59, A03 32, A07 17, A06 13, A08 11, A09 2. ClearToShip's
-own 45 rules add A01 19, A03 9, A04 7, A08 3, A05 2, and one each for A07, A09
+own 48 rules add A01 21, A03 9, A04 7, A08 3, A05 3, and one each for A07, A09
 and A10 — which is the category no vendored rule reaches.
 
 ## OWASP Top 10 for LLM Applications (2026) — coverage
@@ -160,24 +181,31 @@ broadened into **Hidden Context Exposure**.
 | --- | --- | --- |
 | **LLM01** Prompt Injection | 12 + **CTS080** | Caller text interpolated into the instruction text itself; fetched pages and query results reaching a prompt unbounded; instructions hidden in a tool description |
 | **LLM02** Sensitive Information Disclosure | 11 (+ CTS030, CTS045) | Provider keys in client code or a `NEXT_PUBLIC_` variable, `dangerouslyAllowBrowser`, a base URL pointed at somebody else's endpoint |
-| **LLM03** Excessive Agency | 9 | MCP servers with permissive tool access, `allowedTools` wildcards, auto-approve bypassing the permission prompt, settings hooks that fetch or pipe |
+| **LLM03** Excessive Agency | 9 + **CTS083** | MCP servers with permissive tool access, `allowedTools` wildcards, auto-approve bypassing the permission prompt, settings hooks that fetch or pipe; and a tool handed to a model whose body takes an action nobody can undo, with no approval step in it |
 | **LLM04** Supply Chain | 1 | MCP server pinned to `@latest` |
 | **LLM06** Unbounded Consumption | **CTS081** | A request-reachable model call with no `max_tokens` ceiling — the answer's length, and its cost, decided by whoever wrote the input |
+| **LLM07** Misinformation | **CTS085** | Whether an answer is *true* is not a property of the source. What is in the source is the answer being **believed**: a branch, or a function that reads as a check, turning on what the model returned |
 | **LLM08** Hidden Context Exposure | 1 + **CTS082** | A system prompt held in a `'use client'` module, so it ships in the bundle; a prompt returned in an error response |
 | **LLM09** Vector & Embedding Weaknesses | 3 | Retrieval results interpolated into a prompt, unauthenticated vector upserts |
-| **LLM10** Improper Output Handling | 4 | Model output rendered as raw HTML or markdown images, or used in a dangerous sink |
+| **LLM10** Improper Output Handling | 4 + **CTS084** | Model output rendered as raw HTML or markdown images, or used in a dangerous sink — and, first-party, the answer followed from the call that produced it into `eval`, `new Function`, a shell, raw SQL or the DOM |
 | **LLM05** Data & Model Poisoning | — | Needs training-pipeline and dataset provenance. Nothing in a web app's source tree answers it, and a rule that pretended otherwise would be box-checking |
-| **LLM07** Misinformation | — | A property of what the model says, not of the code that calls it. The adjacent detectable case — model output driving a security decision — would be a real rule, and is not written yet |
 
 The mapping is derived from each rule's own text rather than a hand-kept list of
 ids, so re-vendoring upstream cannot silently drop it, and it is deliberately
 conservative: a rule that does not clearly belong to a category gets none.
 
-**Eight of ten have first-party or vendored detection. Two do not, and will not
-get a rule for the sake of the table** — LLM05 needs artefacts that are not in
-the repository, and LLM07 is about the truthfulness of an answer. A tool that
-claimed those would be lying about what it checked, which is the failure mode
-this project exists to avoid.
+**Nine of ten have first-party or vendored detection. One does not, and will not
+get a rule for the sake of the table** — LLM05 needs training-pipeline and dataset
+provenance, and nothing in a web app's source tree answers it. A tool that claimed
+it would be lying about what it checked, which is the failure mode this project
+exists to avoid.
+
+LLM07 left that group in 0.13.0, and it is worth being exact about how. Nothing here
+judges whether an answer is true; that is still not a property of the source. What
+the source does show is the answer being *trusted* — `if (verdict === 'safe')`, or a
+function named like a check handing back whatever the model said. That is the
+detectable half, it was named as missing in this table for two releases, and it is
+now CTS085.
 
 ## Usage
 
@@ -251,7 +279,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: murtazaozdemir/cleartoship@v0.12.2
+      - uses: murtazaozdemir/cleartoship@v0.13.0
         with:
           fail-on: critical
           comment: true
@@ -273,7 +301,7 @@ above `fail-on`) for use in later steps. The comment is *sticky* — re-runs edi
 the same comment instead of piling up.
 
 By default the action runs the scanner version its own ref declares, so
-`@v0.12.2` runs `cleartoship@0.12.2` and pinning the ref pins the behaviour. If
+`@v0.13.0` runs `cleartoship@0.13.0` and pinning the ref pins the behaviour. If
 that version is not on the registry, it builds from its own checkout instead, so
 `uses: …@ref` works against an unpublished commit.
 
@@ -378,6 +406,27 @@ uploaded, and no database is connected to.
   aliases) and credits a call whose helper authenticates, directly or through
   another helper. Third-party packages are never followed, so a call into
   `node_modules` still proves nothing on its own.
+- **A rule about model output has to prove the output came from a model.**
+  `dangerouslySetInnerHTML` is everywhere — theme scripts, chart CSS, sanitized
+  markdown — and reporting all of it would be a regex, not a finding. CTS084 and
+  CTS085 first collect every binding in the file that holds what a model
+  returned, following it through the shapes the SDKs actually produce
+  (`const { text } = await generateText(...)`, `message.content[0].text`,
+  `completion.choices[0].message.content`) and one hop onward, then ask whether
+  *that* value reaches the sink. Across five dogfooded repos the rules fired
+  zero times; on a probe corpus written to break them, `SLUG.exec(slug)` and
+  `seen.delete(key)` on a `Map` stayed silent while a Supabase delete, a Drizzle
+  delete and a two-hop Anthropic answer reaching `execSync` all fired.
+- **An approval gate is code, not a description.** CTS083 stands down when
+  something in the tool puts a person in front of the effect — a confirmation, a
+  permission check, `needsApproval: true`. That test reads identifiers and
+  property keys only, never string values: a tool whose `description` says
+  "review this before approving" has written prose, and prose must not be able
+  to talk the rule out of firing.
+- **Writing a row is not excessive agency.** An agent that inserts and updates is
+  the ordinary case, and reporting it would bury CTS083 in its own output. What
+  it reports is the subset a wrong answer cannot be undone from: rows deleted,
+  money moved, mail sent to somebody, a shell command, a file removed.
 - **A machine endpoint authenticates differently.** Comparing an `Authorization`
   header against a server-side secret is the auth check for a cron or
   webhook route, and a verified provider signature *is* the caller's identity —

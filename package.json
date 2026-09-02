@@ -1,7 +1,7 @@
 {
   "name": "cleartoship",
-  "version": "0.12.2",
-  "description": "The 30-second pre-launch security clearance for AI-built & vibe-coded apps. Catches missing Server Action auth, Supabase RLS holes, hallucinated npm packages and leaked keys.",
+  "version": "0.13.0",
+  "description": "The 30-second pre-launch security clearance for AI-built apps. Statically checks the agent surface no runtime scanner sees before deploy — ungated tools, model output in a shell, prompts in the client bundle — plus missing Server Action auth, Supabase RLS holes, hallucinated npm packages and leaked keys. Free while in beta.",
   "keywords": [
     "security",
     "sast",
@@ -12,7 +12,12 @@
     "slopsquatting",
     "hallucinated-packages",
     "vibe-coding",
-    "ai-code-review"
+    "ai-code-review",
+    "llm-security",
+    "owasp-llm-top-10",
+    "ai-agents",
+    "prompt-injection",
+    "mcp"
   ],
   "license": "MIT",
   "type": "module",

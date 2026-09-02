@@ -11,7 +11,7 @@ export function banner(version: string): string {
   return (
     pc.cyan(ART) +
     '\n  ' +
-    pc.dim('Pre-flight security check for AI-built & vibe-coded apps') +
+    pc.dim('Pre-flight security check for AI-built apps, agents included') +
     pc.dim(` • v${version}`) +
     '\n'
   );
