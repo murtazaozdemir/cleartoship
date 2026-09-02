@@ -1,4 +1,10 @@
 # Copy to .github/workflows/security.yml in your own repository.
+#
+# NOTE: this file uses the composite action, which lives in the (currently
+# private) cleartoship repository — `uses: murtazaozdemir/cleartoship@…` will
+# fail with "Unable to resolve action" for anyone who cannot read that repo.
+# Until it is public, use examples/security-cli.yml, which drives the published
+# npm package and needs no access to anything.
 name: ClearToShip
 
 on:

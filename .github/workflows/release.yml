@@ -15,6 +15,7 @@ concurrency:
 
 permissions:
   contents: write   # for the GitHub Release
+  id-token: write   # for the Sigstore OIDC token that signs provenance
 
 jobs:
   publish:
@@ -61,16 +62,38 @@ jobs:
           fi
           echo "npm authenticated as: ${who}"
 
-      - name: Publish to npm
+      - name: Publish to npm, with provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           ver=$(node -p "require('./package.json').version")
-          if npm view "cleartoship@${ver}" version >/dev/null 2>&1; then
+          published() { [ "$(npm view "cleartoship@${ver}" version 2>/dev/null)" = "$ver" ]; }
+
+          if published; then
             echo "cleartoship@${ver} is already published; nothing to do."
             exit 0
           fi
-          # --provenance needs a public repo; add it when this repo goes public.
+
+          # Provenance ties this tarball to this workflow run and this commit
+          # through Sigstore, and npm shows the result on the package page.
+          # npm checks exactly two prerequisites (libnpmpublish's
+          # ensureProvenanceGeneration): an OIDC token, which `id-token: write`
+          # above provides, and that the *package* is public. The source
+          # repository's visibility is never checked — so this works while the
+          # repo is private; the attestation simply names a commit an outsider
+          # cannot fetch yet, and becomes fully verifiable the day it can.
+          if npm publish --provenance --access public; then
+            exit 0
+          fi
+
+          # A publish either lands whole or not at all, but check before
+          # retrying rather than assume it.
+          if published; then
+            echo "::warning::publish exited non-zero yet the registry serves ${ver}; not retrying"
+            exit 0
+          fi
+
+          echo "::warning::Publishing with provenance failed. Retrying without it so the release still ships — read the error above and fix it before the next release."
           npm publish --access public
 
       - name: Verify the registry actually serves it

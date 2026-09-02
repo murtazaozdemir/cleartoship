@@ -169,7 +169,33 @@ room to be written out.
 
 ## Continuous integration
 
-### GitHub Action (recommended)
+### The CLI (works anywhere, today)
+
+One line in any workflow, on any CI. It needs nothing from GitHub beyond npm:
+
+```yaml
+      - run: npx cleartoship --fail-on=critical
+```
+
+To feed findings into GitHub's Security tab:
+
+```yaml
+      - run: npx cleartoship --sarif -o results.sarif --fail-on=none
+      - uses: github/codeql-action/upload-sarif@v3
+        with: { sarif_file: results.sarif }
+```
+
+A copyable workflow is in [`examples/security-cli.yml`](examples/security-cli.yml).
+
+### GitHub Action
+
+> **Not usable from other repositories yet.** The action lives in *this*
+> repository, which is currently private, so `uses: murtazaozdemir/cleartoship@…`
+> resolves for nobody but its owner — GitHub answers `Unable to resolve action`
+> — and it cannot be listed on the Marketplace. Nothing about it is broken; it
+> simply needs the repository to be public, and it works the day that happens.
+> Until then, use the CLI recipe above. The npm package itself is public and
+> unaffected.
 
 Posts a summary comment on every pull request, blocks the merge on critical
 findings, and optionally uploads to the Security tab. Copy
@@ -211,20 +237,6 @@ By default the action runs the scanner version its own ref declares, so
 `@v0.8.0` runs `cleartoship@0.8.0` and pinning the ref pins the behaviour. If
 that version is not on the registry, it builds from its own checkout instead, so
 `uses: …@ref` works against an unpublished commit.
-
-### Plain CLI
-
-```yaml
-      - run: npx cleartoship --fail-on=critical
-```
-
-To feed findings into GitHub's Security tab without the Action:
-
-```yaml
-      - run: npx cleartoship --sarif -o results.sarif --fail-on=none
-      - uses: github/codeql-action/upload-sarif@v3
-        with: { sarif_file: results.sarif }
-```
 
 ## How it works
 

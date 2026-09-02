@@ -1,0 +1,42 @@
+# Copy to .github/workflows/security.yml in your own repository.
+#
+# The CLI path: nothing but npm is involved, so it works on any CI and from any
+# repository today. (The composite action in examples/security.yml is nicer —
+# sticky PR comments, typed outputs — but it lives in a repository that is
+# currently private, so `uses: murtazaozdemir/cleartoship@…` cannot resolve for
+# anyone else yet.)
+name: ClearToShip
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write # for the SARIF upload below
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Write the report for the Security tab, and don't fail on this step —
+      # the gate is the second run, so a finding is visible in the UI even when
+      # it blocks the build.
+      - run: npx cleartoship --sarif -o cleartoship.sarif --fail-on=none
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: cleartoship.sarif
+
+      # The gate. Registry and OSV answers are cached for 24h, so the second
+      # pass re-parses locally and makes no network calls.
+      - run: npx cleartoship --fail-on=critical
+
+      # Optional: put the human-readable report in the job summary.
+      - if: always()
+        run: npx cleartoship --markdown --fail-on=none >> "$GITHUB_STEP_SUMMARY"
