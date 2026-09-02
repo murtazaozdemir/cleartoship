@@ -69,11 +69,51 @@ const WITHHELD = new Map<string, string>([
       'rather than published libraries',
   ],
   [
+    'VG865',
+    'declares itself a `.npmignore` lint but is registered for the `shell` language, so it ' +
+      'matches almost every line of every shell script — 6 hits on two `scripts/*.sh` files, ' +
+      'all false, and it is a packaging lint rather than a security finding either way',
+  ],
+  [
     'VG1004',
     'matches every `use server` module with an exported function; it asserts "no rate limiting" ' +
       'without ever checking for it',
   ],
 ]);
+
+/**
+ * Machine-generated dependency lockfiles. Their entries describe the *transitive*
+ * graph, which nobody in this repo wrote or can edit directly.
+ */
+const LOCKFILE =
+  /(^|\/)(package-lock\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|bun\.lockb?|composer\.lock|Pipfile\.lock|poetry\.lock)$/i;
+
+/**
+ * Rules whose signal only exists in a hand-authored manifest. The same JSON
+ * shapes appear all over a lockfile describing packages a dependency chose, so
+ * a hit there is both unactionable and, measured on the dogfooding corpus,
+ * wrong: `fast-glob`, `fast-deep-equal`, `common-tags`, `core-js` and
+ * `simple-statistics` all trip the deceptive-prefix list, and the "wildcard
+ * version" rule fires on transitive `"node": ">=16"` engine constraints.
+ * Declared package names are covered properly by CTS020-CTS027, which ask the
+ * registry rather than matching a prefix.
+ */
+const MANIFEST_ONLY = new Map<string, string>([
+  ['VG872', 'internal-name heuristic; in a lockfile it names a transitive dependency'],
+  ['VG873', 'deceptive-prefix heuristic; matches ordinary transitive package names'],
+  ['VG020', 'wildcard version; a transitive range is the dependency author\'s choice'],
+]);
+
+/**
+ * Per-rule filters for a match shape the upstream regex cannot exclude on its
+ * own. Applied to the matched text, not the whole file.
+ */
+const MATCH_GUARDS: Record<string, (match: string) => boolean> = {
+  // A `"link": true` entry is a workspace or pnpm symlink resolved to a path on
+  // disk rather than a tarball, so it has no integrity hash by design. Thirty of
+  // them in one pnpm-managed lockfile, every one reported as a false critical.
+  VG870: (match) => !/"link"\s*:\s*true/.test(match),
+};
 
 /** Paths where a match is a fixture or documentation rather than shipped code. */
 const NON_PRODUCTION_PATH =
@@ -110,11 +150,14 @@ export const communityScanner: Scanner = {
 
       const relPath = rel(ctx.root, file);
       const fixture = NON_PRODUCTION_PATH.test(relPath);
+      const lockfile = LOCKFILE.test(relPath);
       const suppress = new Suppressions(source);
       filesScanned++;
 
       for (const rule of active) {
         if (!rule.languages.some((l) => languages.includes(l))) continue;
+        if (lockfile && MANIFEST_ONLY.has(rule.id)) continue;
+        const guard = MATCH_GUARDS[rule.id];
 
         const re = rule.pattern;
         re.lastIndex = 0;
@@ -124,6 +167,12 @@ export const communityScanner: Scanner = {
           // A zero-width match would spin forever on a global regex.
           if (m[0].length === 0) {
             re.lastIndex++;
+            continue;
+          }
+          // Skipping a match must not skip the non-global `break` below, or a
+          // rule without /g would rescan from zero forever.
+          if (guard && !guard(m[0])) {
+            if (!re.global) break;
             continue;
           }
           const line = lineAt(source, m.index);
@@ -160,7 +209,8 @@ export const communityScanner: Scanner = {
       label: `Community ruleset (${active.length} rules over ${filesScanned} files)`,
       passed: result.findings.every((f) => f.severity !== 'critical'),
       note:
-        `${SUPERSEDED.size} superseded by ClearToShip's AST checks, ${WITHHELD.size} withheld as noisy`,
+        `${SUPERSEDED.size} superseded by ClearToShip's AST checks, ${WITHHELD.size} withheld as noisy, ` +
+        `${MANIFEST_ONLY.size} manifest-only (not run over lockfiles)`,
     });
     return result;
   },

@@ -1,0 +1,9 @@
+{
+  "name": "indirect-auth-app",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "next": "^15.5.18",
+    "zod": "^3.23.8"
+  }
+}

@@ -14,6 +14,7 @@ import { Suppressions } from '../dist/utils/suppress.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const VULNERABLE = join(here, 'fixtures', 'vulnerable-app');
 const CLEAN = join(here, 'fixtures', 'clean-app');
+const INDIRECT = join(here, 'fixtures', 'indirect-auth-app');
 const CLI = join(here, '..', 'dist', 'cli.js');
 
 // Credential-shaped fixture state is generated, never committed.
@@ -92,6 +93,47 @@ test('clean fixture: no findings at all', async () => {
     [],
   );
   assert.ok(result.checks.every((c) => c.passed));
+});
+
+test('auth resolved in an imported helper counts as auth', async () => {
+  const result = await scan({ root: INDIRECT, offline: true });
+  const action = result.findings.filter((f) => f.file === 'app/actions/team.ts');
+  assert.deepEqual(
+    action.map((f) => f.id),
+    [],
+    `renameTeam authenticates via requireUser() from @/lib/auth, got ${action
+      .map((f) => `${f.id}@${f.line}`)
+      .join(', ')}`,
+  );
+});
+
+test('a shared-secret cron endpoint is authenticated, and its health check is not a finding', async () => {
+  const result = await scan({ root: INDIRECT, offline: true });
+  const route = result.findings.filter((f) => f.file === 'app/api/cron/digest/route.ts');
+  assert.deepEqual(
+    route.filter((f) => f.id === 'CTS001' || f.id === 'CTS046').map((f) => `${f.id}@${f.line}`),
+    [],
+    'the POST compares Authorization against CRON_SECRET; the GET returns a constant',
+  );
+  // Nor is a route that never reads a body reported for not validating one.
+  assert.equal(route.filter((f) => f.id === 'CTS002').length, 0);
+});
+
+test('lockfile entries are judged as lockfile entries', async () => {
+  const result = await scan({ root: INDIRECT, offline: true });
+  const lock = result.findings.filter((f) => f.file === 'package-lock.json');
+
+  // A workspace link resolves to a directory, so it has no integrity hash by
+  // design; a tarball entry without one is the real finding.
+  const integrity = lock.filter((f) => f.id === 'VG870');
+  assert.equal(integrity.length, 1, 'only the tampered tarball entry should fire');
+  assert.equal(integrity[0].snippet.includes('tampered-pkg'), true);
+
+  // Name heuristics belong to a hand-written manifest: every one of these
+  // matched a transitive dependency nobody in the project chose.
+  for (const id of ['VG872', 'VG873', 'VG020']) {
+    assert.equal(lock.some((f) => f.id === id), false, `${id} should not run over a lockfile`);
+  }
 });
 
 test('scan honours --ignore, --only and --min-severity equivalents', async () => {

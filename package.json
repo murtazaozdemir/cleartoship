@@ -30,7 +30,10 @@
   "files": [
     "dist",
     "README.md",
+    "SECURITY.md",
     "LICENSE",
+    "ATTRIBUTION.md",
+    "LICENSES",
     "action.yml",
     "examples"
   ],
@@ -54,9 +57,6 @@
     "@types/babel__traverse": "^7.20.6",
     "@types/node": "^22.5.0",
     "typescript": "^5.6.0"
-  },
-  "optionalDependencies": {
-    "pg": "^8.13.0"
   },
   "repository": {
     "type": "git",

@@ -1,6 +1,8 @@
 import { read, rel, isScript, snippetAt } from '../utils/files.js';
 import { parseSource, calleeName, calleeTail, hasDirective } from '../utils/ast.js';
 import { traverse } from '../utils/traverse.js';
+import { buildModuleIndex } from '../utils/modules.js';
+import { authNamesFor } from './auth-helpers.js';
 import { Suppressions } from '../utils/suppress.js';
 import { emptyResult } from '../types.js';
 import type { Finding, ProjectContext, ScanResult, Scanner } from '../types.js';
@@ -16,6 +18,11 @@ const AUTH_CALLS = [
   'getAuth', 'validateRequest', 'verifySession', 'requireUser', 'requireAuth',
   'requireSession', 'assertAuthenticated', 'getCurrentUser', 'getLoggedInUser',
   'getToken', 'verifyToken', 'verifyIdToken', 'protect', 'ensureUser',
+  // Framework primitives that verify a signed session token rather than read
+  // one: Shopify App Bridge's session-token exchange, Shopify Remix's
+  // `authenticate.admin(request)`, and jose's JWT verification.
+  'session.decodeSessionToken', 'decodeSessionToken', 'authenticate.admin',
+  'authenticate.public', 'authenticate.flow', 'jwtVerify', 'verifyJWT', 'verifyJwt',
 ];
 
 /** Higher-order wrappers that apply auth (and often validation) for the action. */
@@ -61,6 +68,31 @@ const SIGNATURE_CHECKS = [
 const SIGNATURE_HEADERS =
   /(x-shopify-hmac-sha256|x-hub-signature(-256)?|stripe-signature|svix-signature|svix-id|x-signature|x-webhook-signature|x-slack-signature|x-line-signature|paypal-transmission-sig)/i;
 
+/**
+ * Headers that exist to carry a caller credential. Reading one *and* comparing
+ * it against a server-side secret is how a cron or machine-to-machine endpoint
+ * authenticates — there is no session to look up.
+ */
+const CREDENTIAL_HEADERS =
+  /^(authorization|proxy-authorization|x-api-key|x-apikey|api-key|x-auth-token|x-access-token|x-cron-secret|x-webhook-secret|x-admin-key|x-internal-token)$/i;
+
+/** `process.env.SOMETHING_SECRET` and friends — the other half of that check. */
+const SECRET_ENV = /^process\.env\.[A-Z0-9_]*(SECRET|TOKEN|KEY|PASSWORD|PASS)[A-Z0-9_]*$/;
+
+/**
+ * Calls that only build the HTTP response. A handler whose body contains
+ * nothing else is a static responder — a health check — with no work to trigger.
+ */
+const RESPONSE_CALLS =
+  /^(NextResponse\.(json|redirect|next|rewrite)|Response\.(json|redirect|error)|json|res\.(json|send|status))$/;
+
+/**
+ * Reading the request body. Anchored on the receiver so `NextResponse.json(...)`
+ * — which writes the response — is not mistaken for reading the request.
+ */
+const REQUEST_INPUT_READ =
+  /(^|\.)(req|request|nextRequest|_req|_request)\??\.(json|text|formData|arrayBuffer|blob)$/i;
+
 /** Schema escape hatches that make validation decorative. */
 const LOOSE_SCHEMA = /\.passthrough\s*\(|z\s*\.\s*(any|unknown)\s*\(|\.catchall\s*\(/g;
 
@@ -69,11 +101,68 @@ const SERVICE_ROLE_HINTS = [
   'SUPABASE_SECRET_KEY',
 ];
 
-/** Identifiers that plausibly carry the authenticated principal's id. */
+/**
+ * Dotted expressions that plausibly carry the authenticated principal's id.
+ * The principal is not always a person: in a B2B or platform app it is the
+ * tenant — a store, org, workspace or team — and a write scoped to it is
+ * scoped just as tightly as one scoped to a user id.
+ */
 const OWNER_HINTS = [
   'user.id', 'user?.id', 'session.user.id', 'userId', 'user_id', 'auth.uid',
   'currentUser.id', 'ctx.user', 'claims.sub', 'uid',
+  'store.id', 'shop.id', 'org.id', 'organization.id', 'tenant.id', 'workspace.id',
+  'account.id', 'team.id', 'company.id', 'session.shop', 'session.shopDomain',
 ];
+
+/** Bare identifiers carrying that same principal. */
+const OWNER_IDENTIFIERS = new Set([
+  'userId', 'user_id', 'ownerId', 'owner_id', 'shop', 'shopDomain', 'shop_domain',
+  'storeId', 'store_id', 'orgId', 'org_id', 'organizationId', 'organization_id',
+  'tenantId', 'tenant_id', 'workspaceId', 'workspace_id', 'accountId', 'account_id',
+  'teamId', 'team_id', 'companyId', 'company_id',
+]);
+
+/** Names bound by a function's own parameter list, destructuring included. */
+function parameterNames(params: any[]): Set<string> {
+  const names = new Set<string>();
+  const visit = (node: any, depth = 0) => {
+    if (!node || depth > 8) return;
+    switch (node.type) {
+      case 'Identifier':
+        names.add(node.name);
+        return;
+      case 'AssignmentPattern':
+        visit(node.left, depth + 1);
+        return;
+      case 'RestElement':
+        visit(node.argument, depth + 1);
+        return;
+      case 'ObjectPattern':
+        for (const prop of node.properties ?? []) {
+          visit(prop.type === 'ObjectProperty' ? prop.value : prop, depth + 1);
+        }
+        return;
+      case 'ArrayPattern':
+        for (const el of node.elements ?? []) visit(el, depth + 1);
+        return;
+      default:
+        return;
+    }
+  };
+  for (const p of params ?? []) visit(p);
+  return names;
+}
+
+/** Root identifier of `a.b.c` — the binding the expression reads from. */
+function rootObject(node: any): string | null {
+  let cur = node;
+  let guard = 0;
+  while (cur && guard++ < 16) {
+    if (cur.type === 'Identifier') return cur.name;
+    cur = cur.object ?? cur.expression ?? cur.argument;
+  }
+  return null;
+}
 
 function matchesAny(name: string, list: string[]): boolean {
   for (const candidate of list) {
@@ -100,9 +189,22 @@ interface ActionInfo {
   spreadLine: number | null;
   looseSchemaLine: number | null;
   readsAuthHeader: boolean;
+  /** Reads a credential-carrying header (not just any header). */
+  readsCredentialHeader: boolean;
+  /** References a server-side secret, e.g. `process.env.CRON_SECRET`. */
+  readsSecretEnv: boolean;
+  /** Calls that do something other than build the response. */
+  workCalls: number;
+  /** Reads caller-supplied input: a request body, query string or route param. */
+  readsRequestInput: boolean;
 }
 
-function analyseFunction(path: any, name: string): ActionInfo {
+function analyseFunction(
+  path: any,
+  name: string,
+  /** Names that stand for an auth check in this file — see ./auth-helpers.ts. */
+  credited: ReadonlySet<string>,
+): ActionInfo {
   const node = path.node;
   const info: ActionInfo = {
     name,
@@ -120,11 +222,26 @@ function analyseFunction(path: any, name: string): ActionInfo {
     spreadLine: null,
     looseSchemaLine: null,
     readsAuthHeader: false,
+    readsCredentialHeader: false,
+    readsSecretEnv: false,
+    workCalls: 0,
+    // A Server Action's arguments *are* its input; a Route Handler has to go
+    // and read one, so that is detected below.
+    readsRequestInput: false,
   };
+
+  // An id the caller passed in is not proof of ownership — it is the IDOR.
+  // Only a principal resolved inside the function counts as scoping.
+  const params = parameterNames(node.params ?? []);
+  // `export async function GET(_req, { params })` — the segment values are
+  // caller-supplied input just as much as a body is.
+  if (params.has('params')) info.readsRequestInput = true;
 
   const inspect = (inner: any) => {
     const full = calleeName(inner.node.callee);
     const tail = calleeTail(inner.node.callee);
+    if (!RESPONSE_CALLS.test(full)) info.workCalls++;
+    if (REQUEST_INPUT_READ.test(full)) info.readsRequestInput = true;
 
     // `supabase.auth.getSession()` reads the cookie without asking the auth
     // server whether the token is still valid, so it proves nothing on the
@@ -134,6 +251,13 @@ function analyseFunction(path: any, name: string): ActionInfo {
     if (isSupabaseGetSession) {
       info.getSessionLine ??= inner.node.loc?.start.line ?? info.line;
     } else if (matchesAny(full, AUTH_CALLS)) {
+      info.hasAuth = true;
+    } else if (credited.has(full)) {
+      // The check lives in a first-party helper this file imports, or one
+      // defined above in the same file. Matched on the whole callee name, not
+      // its tail: a helper is called by the name this file binds it to, and
+      // crediting `crypto.verify()` because some other module exports a
+      // `verify` helper would hide a real finding.
       info.hasAuth = true;
     }
     if (matchesAny(full, AUTH_WRAPPERS)) info.hasAuth = true;
@@ -162,8 +286,10 @@ function analyseFunction(path: any, name: string): ActionInfo {
     // Reading a webhook-signature header counts as participating in
     // verification (see SIGNATURE_HEADERS).
     for (const arg of inner.node.arguments ?? []) {
-      if (arg?.type === 'StringLiteral' && SIGNATURE_HEADERS.test(arg.value)) {
-        info.hasSignatureCheck = true;
+      if (arg?.type !== 'StringLiteral') continue;
+      if (SIGNATURE_HEADERS.test(arg.value)) info.hasSignatureCheck = true;
+      if (CREDENTIAL_HEADERS.test(arg.value) && /headers\.get$/.test(full)) {
+        info.readsCredentialHeader = true;
       }
     }
 
@@ -203,22 +329,33 @@ function analyseFunction(path: any, name: string): ActionInfo {
     MemberExpression(inner: any) {
       const full = calleeName(inner.node);
       if (/headers\.get$/.test(full) || full.endsWith('CRON_SECRET')) info.readsAuthHeader = true;
+      if (SECRET_ENV.test(full)) info.readsSecretEnv = true;
+      // `request.url` / `req.nextUrl` are read to get at the query string.
+      if (/(^|\.)searchParams$/.test(full) || /(^|\.)(req|request)\??\.(url|nextUrl)$/i.test(full)) {
+        info.readsRequestInput = true;
+      }
       for (const hint of SERVICE_ROLE_HINTS) {
         if (full.endsWith(hint)) {
           info.serviceRoleLine ??= inner.node.loc?.start.line ?? info.line;
         }
       }
-      for (const hint of OWNER_HINTS) {
-        if (full === hint || full.endsWith('.' + hint)) info.ownerScoped = true;
+      const root = rootObject(inner.node);
+      if (!root || !params.has(root)) {
+        for (const hint of OWNER_HINTS) {
+          if (full === hint || full.endsWith('.' + hint)) info.ownerScoped = true;
+        }
       }
     },
     Identifier(inner: any) {
       if (SERVICE_ROLE_HINTS.includes(inner.node.name)) {
         info.serviceRoleLine ??= inner.node.loc?.start.line ?? info.line;
       }
-      if (inner.node.name === 'userId' || inner.node.name === 'user_id') {
+      if (OWNER_IDENTIFIERS.has(inner.node.name) && !params.has(inner.node.name)) {
         info.ownerScoped = true;
       }
+      // `const { searchParams } = new URL(request.url)` — destructured, so it
+      // never appears as a member expression.
+      if (inner.node.name === 'searchParams') info.readsRequestInput = true;
     },
   });
 
@@ -227,7 +364,8 @@ function analyseFunction(path: any, name: string): ActionInfo {
   let hops = 0;
   while (parent && hops++ < 4) {
     if (parent.node?.type === 'CallExpression') {
-      if (matchesAny(calleeName(parent.node.callee), AUTH_WRAPPERS)) info.hasAuth = true;
+      const wrapper = calleeName(parent.node.callee);
+      if (matchesAny(wrapper, AUTH_WRAPPERS) || credited.has(wrapper)) info.hasAuth = true;
       if (VALIDATION_CALLS.has(calleeTail(parent.node.callee))) info.hasValidation = true;
     }
     parent = parent.parentPath;
@@ -253,6 +391,14 @@ export const serverActionsScanner: Scanner = {
     const result = emptyResult();
     let actionCount = 0;
     let routeCount = 0;
+    // Shared across the whole scan: resolving `@/lib/auth` costs one parse of
+    // that helper, however many actions import it.
+    const helperOptions = {
+      authCalls: AUTH_CALLS,
+      authWrappers: AUTH_WRAPPERS,
+      index: buildModuleIndex(ctx.files, ctx.root),
+      cache: new Map<string, ReadonlySet<string>>(),
+    };
 
     for (const file of ctx.files) {
       if (!isScript(file)) continue;
@@ -271,6 +417,7 @@ export const serverActionsScanner: Scanner = {
       }
       const suppress = new Suppressions(source);
       const programUseServer = moduleUseServer || hasDirective(ast.program, 'use server');
+      const credited = authNamesFor(file, helperOptions, ast);
 
       const push = (f: Omit<Finding, 'file'> & { line: number }) => {
         if (suppress.suppressed(f.line, f.id)) return;
@@ -288,7 +435,7 @@ export const serverActionsScanner: Scanner = {
         const isRoute = Boolean(httpMethod);
         if (!isAction && !isRoute) return;
 
-        const info = analyseFunction(path, name);
+        const info = analyseFunction(path, name, credited);
         if (isAction) actionCount++;
         if (isRoute) routeCount++;
 
@@ -310,15 +457,29 @@ export const serverActionsScanner: Scanner = {
           /(^|\/|-)(login|signin|sign-in|register|signup|sign-up|forgot-password|reset-password|verify-email|resend-verification|magic-link|contact|lead|leads|waitlist|subscribe|unsubscribe|newsletter)(\/|-|\.|$)/i;
         const intentionallyPublic = isRoute && PUBLIC_BY_DESIGN_ROUTE.test(relPath);
 
-        if (writes && !info.hasAuth && info.getSessionLine === null) {
+        // A machine-to-machine endpoint has no session to look up: it proves the
+        // caller by comparing a credential header against a server-side secret.
+        // That is an authorization check, so it must not read as a missing one.
+        const secretAuth = info.readsCredentialHeader && info.readsSecretEnv;
+        // For a webhook, the provider signature *is* the caller's identity.
+        // CTS042 below is the rule for a webhook that verifies nothing.
+        const verifiedWebhook = isWebhook && info.hasSignatureCheck;
+        const authenticated = info.hasAuth || secretAuth || verifiedWebhook;
+
+        if (writes && !authenticated && info.getSessionLine === null) {
           push({
             id: 'CTS001',
-            severity: intentionallyPublic ? 'low' : 'critical',
+            severity: intentionallyPublic ? 'low' : info.hasMutation ? 'critical' : 'high',
             title: intentionallyPublic
               ? `${kind} is unauthenticated (appears public by design)`
               : `Missing ${kind} authorization`,
             detail:
-              `${kind} \`${name}\` performs a database mutation without verifying the caller. ` +
+              `${kind} \`${name}\` ` +
+              (info.hasMutation
+                ? 'performs a database mutation without verifying the caller. '
+                : `accepts ${httpMethod ?? 'POST'} and never verifies the caller. No database write ` +
+                  'is visible in the handler itself, so this is judged on the method alone — a ' +
+                  'read-only endpoint here is a lower risk than the severity suggests. ') +
               exposure +
               (intentionallyPublic
                 ? ' This route name suggests a sign-in / account-recovery or public-intake endpoint, which is unauthenticated by design — confirm it has rate limiting and does not trust caller-supplied identifiers.'
@@ -336,7 +497,11 @@ export const serverActionsScanner: Scanner = {
           });
         }
 
-        if (info.params > 0 && writes && !info.hasValidation) {
+        // A Route Handler that never reads a body, query or route param has no
+        // caller input to validate — reporting one is noise, and it was firing
+        // on cron endpoints whose whole body is a secret comparison.
+        const hasInput = !isRoute || info.readsRequestInput;
+        if (info.params > 0 && writes && hasInput && !info.hasValidation) {
           push({
             id: 'CTS002',
             severity: 'high',
@@ -438,7 +603,10 @@ export const serverActionsScanner: Scanner = {
           });
         }
 
-        if (isCron && !info.readsAuthHeader && !info.hasAuth) {
+        // A cron route's GET health check that returns a constant has nothing to
+        // trigger, so "callable by anyone" is not a finding about it.
+        const doesWork = info.workCalls > 0 || HTTP_MUTATION_METHODS.has(httpMethod ?? '');
+        if (isCron && doesWork && !info.readsAuthHeader && !info.hasAuth && !secretAuth) {
           push({
             id: 'CTS046',
             severity: 'high',

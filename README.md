@@ -87,7 +87,7 @@ reaches a manifest.
 | **CTS071** | high/medium | A security check that **fails open** — `catch { return true }` — or swallows its error (A10) |
 | **CTS072** | high | Insecure deserialization of untrusted data — `unserialize`, `pickle.loads`, unsafe `yaml.load` (A08) |
 
-**Community ruleset** — 436 additional rules vendored from
+**Community ruleset** — 435 additional rules vendored from
 [GuardVibe](https://github.com/goklab/guardvibe) (Apache-2.0)
 
 Reported under their upstream `VG###` ids. These cover ground the AST scanners
@@ -97,9 +97,12 @@ Dockerfiles, Terraform, GitHub Actions pinning, prompt injection and MCP tool
 runtimes, React Native, Go and shell.
 
 27 upstream rules are **superseded** where ClearToShip's own AST check is more
-precise, and 5 are **withheld** as measurably noisy — both lists carry a reason
-per rule in `src/scanners/community.ts`. Run `--no-community` to use only
-ClearToShip's rules. See [ATTRIBUTION.md](ATTRIBUTION.md).
+precise, 6 are **withheld** as measurably noisy, and 3 name-heuristic rules are
+**manifest-only** — they never run over a `package-lock.json`, where they matched
+ordinary transitive packages (`fast-glob`, `core-js`) and named nothing anyone
+could act on. Each list carries a reason per rule in
+`src/scanners/community.ts`. Run `--no-community` to use only ClearToShip's
+rules. See [ATTRIBUTION.md](ATTRIBUTION.md).
 
 Findings map to **OWASP Top 10:2025** and CWE.
 
@@ -225,7 +228,8 @@ To feed findings into GitHub's Security tab without the Action:
 
 ## How it works
 
-Four scanners, all static — nothing is uploaded and no database is contacted.
+Six scanners, all static: your source is read and parsed, never executed, never
+uploaded, and no database is connected to.
 
 1. **Server Actions & Route Handlers** — parses TS/TSX with Babel, finds every exported
    function reachable over HTTP (`'use server'` modules, inline directives, `app/**/route.ts`
@@ -260,6 +264,41 @@ Four scanners, all static — nothing is uploaded and no database is contacted.
   commented-out line are reported at `low`, never as blocking criticals.
 - **Precision over recall on the noisy rules.** Typosquat matching skips exact matches and
   names shorter than five characters, where one-edit neighbours are meaningless.
+- **Auth is followed into the helper it lives in.** Almost no real app repeats the
+  session check inside every action — it resolves in `lib/auth.ts`, or in a
+  framework helper such as Shopify's `handleSessionToken`, and each action calls
+  that. ClearToShip resolves first-party imports (relative paths and `@/`-style
+  aliases) and credits a call whose helper authenticates, directly or through
+  another helper. Third-party packages are never followed, so a call into
+  `node_modules` still proves nothing on its own.
+- **A machine endpoint authenticates differently.** Comparing an `Authorization`
+  header against a server-side secret is the auth check for a cron or
+  webhook route, and a verified provider signature *is* the caller's identity —
+  neither is reported as missing authorization.
+
+## Trust
+
+A security tool earns its place by being auditable, so the guarantees are stated
+plainly and each one is checkable in a few seconds. `SECURITY.md` has the full
+version, including how to report a vulnerability.
+
+- **Read-only on your code.** The only files ClearToShip writes are the report
+  you ask for with `--output` and its 24-hour registry cache under
+  `~/.cache/cleartoship`. Nothing under the scan root is ever modified.
+- **Your code is never executed.** No `child_process`, no `eval`, no dynamic
+  import of a scanned file. Everything is text, an AST and regexes — which is
+  also why it is safe to point at a repository you have not read yet.
+- **No source leaves the machine.** Online, three hosts are contacted and they
+  receive package **names and versions** only: `registry.npmjs.org` /
+  `api.npmjs.org`, `pypi.org`, `api.osv.dev`. No file contents, no paths, no
+  project name. `--offline` disables all three and makes a run a pure local
+  computation.
+- **No database connection.** The RLS checks read your migration files. There is
+  no database driver in the dependency tree.
+- **Five runtime dependencies.** Three Babel packages, `commander`,
+  `picocolors`. The GuardVibe and gitleaks rulesets are vendored into
+  `src/vendor/`, not installed, so they are visible in every diff and pinned by
+  construction.
 
 ## Programmatic use
 
