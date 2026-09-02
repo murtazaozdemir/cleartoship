@@ -256,14 +256,6 @@ A copyable workflow is in [`examples/security-cli.yml`](examples/security-cli.ym
 
 ### GitHub Action
 
-> **Not usable from other repositories yet.** The action lives in *this*
-> repository, which is currently private, so `uses: murtazaozdemir/cleartoship@…`
-> resolves for nobody but its owner — GitHub answers `Unable to resolve action`
-> — and it cannot be listed on the Marketplace. Nothing about it is broken; it
-> simply needs the repository to be public, and it works the day that happens.
-> Until then, use the CLI recipe above. The npm package itself is public and
-> unaffected.
-
 Posts a summary comment on every pull request, blocks the merge on critical
 findings, and optionally uploads to the Security tab. Copy
 [`examples/security.yml`](examples/security.yml) into `.github/workflows/`:

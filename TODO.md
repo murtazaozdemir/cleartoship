@@ -4,8 +4,10 @@ Public backlog. Working notes, positioning and anything about other projects
 live in `NOTES.private.md`, which is gitignored and stays on my machine.
 
 _Current release: **v0.13.0** (npm `latest`, published 2026-09-02)._
-_Releases publish **unsigned**: npm's registry refuses provenance from a private
-source repo, and `release.yml` turns signing on by itself the day that changes._
+_v0.13.0 and earlier published **unsigned** — npm's registry refuses provenance
+from a private source repo. `release.yml` reads the repository's visibility and
+turns signing on by itself, so the next release after going public is signed
+with no edit needed._
 
 ## Where this stands
 
@@ -23,10 +25,10 @@ surface the headline rather than the fifth section.
 - [ ] **The Node floor.** Babel 8 + commander 15 need Node ^22.18. The code is
       ready — 40/40 tests pass against Babel 8 — and the only open question is
       which Node versions to drop.
-- [ ] **A third-party GitHub Action.** `uses: murtazaozdemir/cleartoship@vX`
-      cannot resolve while this repository is private, and it cannot be listed on
-      the Marketplace. The `npx cleartoship` CI recipe in the README works
-      everywhere today and carries the load until that changes.
+- [ ] **List the Action on the Marketplace.** `uses: murtazaozdemir/cleartoship@vX`
+      resolves now that the repository is public; the Marketplace listing itself
+      is a checkbox on a release and still needs doing. The `npx cleartoship` CI
+      recipe in the README works everywhere regardless.
 - [ ] **A user who is not me.** Every calibration decision so far has been made
       against my own repositories. That is the biggest single weakness in the
       tool's judgement, and no amount of further dogfooding fixes it.
@@ -62,10 +64,15 @@ avoid.
 
 ## Contributing
 
-Not open to outside contributions yet — the repository is private. The npm
-package is public and unaffected: `npx cleartoship`.
+The most useful bug report here is a **false positive, with the code that caused
+it**. A rule that fires on correct code is a worse bug than a rule that misses
+something: one wastes your afternoon and teaches you to ignore the tool, the
+other you never knew about. Removing false positives is what most of this
+project's history is actually made of, and every removal so far was verified by
+reading the code it was about rather than by loosening a threshold.
 
-Bug reports, once that changes, are most useful as a **false positive with the
-code that caused it**. A rule that fires on correct code is a worse bug than a
-rule that misses something, and it is the class of problem this project spends
-most of its time on.
+Second most useful: a **missed finding**, with the code it should have caught.
+
+New rules are welcome, but the bar is deliberately high — a rule that cannot
+name a specific wrong thing a developer would act on does not go in, however
+well it maps to a compliance table.
