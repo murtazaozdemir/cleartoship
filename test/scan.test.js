@@ -159,6 +159,18 @@ test('where a file lives changes what a finding in it costs', async () => {
   );
 });
 
+test('a CVE in a build-time dependency is not a shipping vulnerability', async () => {
+  const result = await scan({ root: INDIRECT, offline: true });
+  const cve = result.findings.filter((f) => f.id === 'VG903');
+  assert.equal(cve.length, 2, 'the same rule matches both declarations');
+
+  const shipped = cve.find((f) => f.snippet.includes('17.0.2'));
+  const build = cve.find((f) => f.snippet.includes('16.14.0'));
+  assert.equal(shipped.severity, 'high', 'a dependency your users run keeps its severity');
+  assert.equal(build.severity, 'low', 'one under devDependencies does not');
+  assert.match(build.detail, /devDependencies/);
+});
+
 test('a bound parameter is not an injection; a raw interpolation still is', async () => {
   const clean = await scan({ root: CLEAN, offline: true });
   assert.deepEqual(

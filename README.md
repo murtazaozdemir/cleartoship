@@ -98,7 +98,7 @@ runtimes, React Native, Go and shell.
 
 27 upstream rules are **superseded** where ClearToShip's own AST check is more
 precise, 6 are **withheld** as measurably noisy, 10 React Native rules are
-**skipped as inapplicable** on a project that is not React Native, 9 carry a
+**skipped as inapplicable** on a project that is not React Native, 11 carry a
 **match guard** for a
 shape their regex cannot exclude (a `"link": true` lockfile entry has no
 integrity hash by design; `querySelectorAll` is not a SQL call; `eval()` inside
@@ -290,6 +290,12 @@ uploaded, and no database is connected to.
   excluded: one is a published CLI's entry point, the other is production schema.
   Across five dogfooded repos this moved 21 findings out of `critical` without
   hiding one of them.
+- **A CVE that only runs on a build machine is not a shipping vulnerability.**
+  CTS024 already split those when OSV answers; the vendored CVE rules — what
+  runs under `--offline` — now make the same split, dropping a match under
+  `devDependencies` (or a lockfile entry marked `"dev": true`) to `low` with the
+  reason attached. The same advisory against a dependency your users run keeps
+  its full severity.
 - **A bound parameter is not an injection.** `db.prepare(\`UPDATE ${table} SET
   csv = ? WHERE id = ?\`).bind(...)` interpolates an identifier while its values
   go through placeholders — the correct pattern, and the one a SQL-injection

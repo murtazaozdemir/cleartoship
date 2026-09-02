@@ -5,6 +5,7 @@ import {
   GUARDVIBE_RULES,
   GUARDVIBE_ATTRIBUTION,
   GUARDVIBE_REACT_NATIVE_RULE_IDS,
+  GUARDVIBE_CVE_RULE_IDS,
 } from '../vendor/guardvibe/index.js';
 import { emptyResult } from '../types.js';
 import type { ProjectContext, ScanResult, Scanner, Severity } from '../types.js';
@@ -248,6 +249,30 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
   VG010: (match, source, index) => sqlGuard(match, source, index),
   VG123: (_match, source, index) => !isParameterized(statementAround(source, index)),
 
+  // The "base64 payload" test is a run of 20+ characters from the base64
+  // alphabet, which any long camelCase identifier satisfies:
+  // `description: \`${pct(clusteredAroundMedian, …)}\`` matched on the
+  // identifier. Interpolated expressions are code, not the description text,
+  // and real encoded content is not purely alphabetic.
+  VG881: (match) => {
+    const text = match.replace(/\$\{[^}]*\}/g, ' ');
+    if (/(?:\\x[0-9a-f]{2}){4,}|(?:\\u[0-9a-f]{4}){4,}|(?:&#\d{2,4};){4,}/i.test(text)) return true;
+    const run = /[A-Za-z0-9+/]{20,}={0,2}/.exec(text)?.[0];
+    // A slash is not evidence: "new/used/refurbished" is twenty characters of
+    // the base64 alphabet and a sentence. Real encoded content carries digits
+    // or padding.
+    return run !== undefined && /[0-9+=]/.test(run);
+  },
+
+  // `eval("require")` is the documented escape hatch for keeping a bundler from
+  // statically resolving a require — a constant the author typed, with no input
+  // reaching it. Dynamic code execution is about the dynamic part.
+  VG014: (match, source, index) => {
+    if (insideStringLiteral(source, index)) return false;
+    const after = source.slice(index, index + 60);
+    return !/^(?:eval|new\s+Function)\s*\(\s*(['"])[A-Za-z_$][\w$]*\1\s*\)/.test(after);
+  },
+
   // SSRF is a *server* being made to fetch a URL it should not. A module marked
   // `'use client'` runs in the browser, where the request leaves the user's own
   // machine and crosses no trust boundary of yours.
@@ -270,11 +295,6 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
       match,
     ),
 
-  // `description: 'eval() executes arbitrary code…'` is prose about eval, not a
-  // call to it — and security tooling, which is a good deal of what gets
-  // scanned, is full of that prose. Code held in a string is not code running
-  // here; the eval that would run it is its own match, outside the quotes.
-  VG014: (_match, source, index) => !insideStringLiteral(source, index),
 };
 
 /** Regexes over very large files are where catastrophic backtracking bites. */
@@ -310,6 +330,46 @@ function inapplicable(ctx: ProjectContext): { ids: ReadonlySet<string>; why: str
 
   return { ids, why };
 }
+
+/**
+ * Whether a dependency-manifest match sits under `devDependencies`, or in a
+ * lockfile entry marked `"dev": true`. Both mean the package is a build-time
+ * tool that no user ever runs — the split CTS024 already makes for CVEs found
+ * through OSV, applied to the vendored CVE rules that run when offline.
+ */
+function inDevDependencies(source: string, index: number): boolean {
+  const before = source.slice(Math.max(0, index - 4000), index);
+  if (/"dev"\s*:\s*true[\s\S]{0,600}$/.test(before)) return true;
+  const nearest = /"(dev|peer|optional)?[dD]ependencies"\s*:\s*\{(?![\s\S]*"[a-z]*[dD]ependencies"\s*:\s*\{)/.exec(
+    before,
+  );
+  return nearest?.[1] === 'dev';
+}
+
+/**
+ * Rules whose upstream severity is right for one shape they match and wrong for
+ * another. Returning null leaves the rule's own severity alone.
+ */
+const SEVERITY_ADJUSTERS: Record<
+  string,
+  (match: string, source: string, index: number) => { severity: Severity; note: string } | null
+> = {
+  // The rule matches two different things. Explicitly accepting `alg: none` is
+  // the critical it is named for. Merely calling `jwt.verify(token, secret)`
+  // without pinning `algorithms` is not: jsonwebtoken has rejected `none` on a
+  // keyed verify since v9, so what is left is defence against algorithm
+  // confusion — worth doing, not worth blocking a deploy over.
+  VG105: (match) =>
+    /algorithms\s*:\s*\[\s*['"]none['"]/i.test(match)
+      ? null
+      : {
+          severity: 'medium',
+          note:
+            ' (Reported at medium: no `algorithms` option is pinned, but nothing here accepts ' +
+            '`alg: none` — a keyed `jwt.verify` rejects it. Pinning the algorithm is defence ' +
+            'against algorithm confusion, which matters most when the key could be a public key.)',
+        },
+};
 
 export const communityScanner: Scanner = {
   name: `Community ruleset (${GUARDVIBE_RULES.length - SUPERSEDED.size - WITHHELD.size} rules)`,
@@ -363,12 +423,30 @@ export const communityScanner: Scanner = {
           const key = `${relPath}:${line}:${rule.id}`;
           if (!seen.has(key) && !suppress.suppressed(line, rule.id)) {
             seen.add(key);
-            const placed = adjustForPath(severityOf(rule.severity), relPath);
+            let adjusted = SEVERITY_ADJUSTERS[rule.id]?.(m[0], source, m.index) ?? null;
+            // A CVE in something that only ever runs on a build machine is not
+            // a shipping vulnerability. OSV-sourced findings are already split
+            // this way (CTS024); this is the same split for the vendored CVE
+            // rules, which are what runs with --offline.
+            if (
+              !adjusted &&
+              GUARDVIBE_CVE_RULE_IDS.has(rule.id) &&
+              (lockfile || /(^|\/)package\.json$/.test(relPath)) &&
+              inDevDependencies(source, m.index)
+            ) {
+              adjusted = {
+                severity: 'low',
+                note:
+                  ' (Reported at low: this version is declared under devDependencies, so it is a ' +
+                  'build-time tool rather than something your users run.)',
+              };
+            }
+            const placed = adjustForPath(adjusted?.severity ?? severityOf(rule.severity), relPath);
             result.findings.push({
               id: rule.id,
               severity: placed.severity,
               title: rule.name,
-              detail: rule.description + placed.note,
+              detail: rule.description + (adjusted?.note ?? '') + placed.note,
               fix: rule.fixCode ? `${rule.fix}\n\n${rule.fixCode}` : rule.fix,
               file: relPath,
               line,
