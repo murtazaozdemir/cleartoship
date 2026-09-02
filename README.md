@@ -267,7 +267,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: murtazaozdemir/cleartoship@v0.11.0
+      - uses: murtazaozdemir/cleartoship@v0.12.0
         with:
           fail-on: critical
           comment: true
@@ -289,7 +289,7 @@ above `fail-on`) for use in later steps. The comment is *sticky* — re-runs edi
 the same comment instead of piling up.
 
 By default the action runs the scanner version its own ref declares, so
-`@v0.11.0` runs `cleartoship@0.11.0` and pinning the ref pins the behaviour. If
+`@v0.12.0` runs `cleartoship@0.12.0` and pinning the ref pins the behaviour. If
 that version is not on the registry, it builds from its own checkout instead, so
 `uses: …@ref` works against an unpublished commit.
 
