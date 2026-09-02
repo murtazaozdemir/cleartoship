@@ -17,7 +17,7 @@ jobs:
   detects-vulnerable:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: scan
         continue-on-error: true
         uses: ./
@@ -37,7 +37,7 @@ jobs:
   passes-clean:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: scan
         uses: ./
         with:
@@ -62,7 +62,7 @@ jobs:
       contents: read
       pull-requests: write   # the sticky comment; the repo default is read-only
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: scan
         uses: ./
         with:
