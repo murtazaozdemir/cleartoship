@@ -133,6 +133,58 @@ function looksLikeSecretValue(match: string): boolean {
   return true;
 }
 
+/** Bind placeholders: `?`, `$1`, `:name`, `@name`, anywhere a value may go. */
+const BIND_PLACEHOLDER = /[\s(,=]\?(?=[\s,)`;]|$)|\$\d+\b|[\s(,=]:[A-Za-z_]\w*|[\s(,=]@[A-Za-z_]\w*/;
+
+/** `${...}` expressions that read straight from the request. */
+const INTERPOLATES_REQUEST =
+  /\$\{[^}]*\b(req|request|body|params|query|searchParams|argv|input|formData|payload)\b/i;
+
+/**
+ * The whole statement a match sits in. Both SQL rules stop matching at the first
+ * `${`, so the bind placeholders that decide the question are usually *past* the
+ * end of the match — `prepare(\`UPDATE ${table} SET csv_data = ? WHERE id = ?\`)`
+ * matches only as far as `UPDATE ${`.
+ */
+function statementAround(source: string, index: number): string {
+  const open = source.indexOf('`', index);
+  if (open !== -1 && open - index < 120) {
+    for (let i = open + 1; i < source.length && i < open + 800; i++) {
+      if (source[i] === '\\') {
+        i++;
+        continue;
+      }
+      // A little past the closing backtick, so the chained `.bind(...)` that
+      // decides whether the values are parameterized is inside the window.
+      if (source[i] === '`') return source.slice(index, i + 121);
+    }
+  }
+  return source.slice(index, index + 400);
+}
+
+/**
+ * Whether the statement passes its values as bound parameters. Interpolating a
+ * table name into an otherwise parameterized query is ordinary; interpolating
+ * `${req.query.id}` is the bug, and a query doing both still fails this test.
+ */
+function isParameterized(statement: string): boolean {
+  if (INTERPOLATES_REQUEST.test(statement)) return false;
+  // Handing the statement to `.bind(...)` is the parameterizing itself, and it
+  // covers the idioms a placeholder scan cannot see: `IN (${ids.map(() =>
+  // '?').join(',')})`, or a constant SQL fragment interpolated beside binds.
+  if (/\.\s*bind\s*\(\s*[^)\s]/.test(statement)) return true;
+  // Otherwise look for the placeholders themselves — with interpolations
+  // dropped first, so a JavaScript ternary is not read as a `?` parameter.
+  return BIND_PLACEHOLDER.test(statement.replace(/\$\{[^}]*\}/g, ' '));
+}
+
+/** The verb has to be a SQL verb, and the statement must not be parameterized. */
+function sqlGuard(match: string, source: string, index: number): boolean {
+  const verb = /^[A-Za-z_]+/.exec(match)?.[0] ?? '';
+  if (!SQL_VERBS.test(verb) && !SQL_KEYWORDS.test(match)) return false;
+  return !isParameterized(statementAround(source, index));
+}
+
 /** Whether `index` falls inside a quoted string on its own line. */
 function insideStringLiteral(source: string, index: number): boolean {
   const lineStart = source.lastIndexOf('\n', index - 1) + 1;
@@ -167,10 +219,6 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
   // SQL call. Weak verbs have to be backed by something that looks like SQL;
   // `query`, `execute` and friends stand on their own. A real interpolated
   // `exec(\`INSERT INTO ...\`)` still matches — checked against one.
-  VG010: (match) => {
-    const verb = /^[A-Za-z_]+/.exec(match)?.[0] ?? '';
-    return SQL_VERBS.test(verb) || SQL_KEYWORDS.test(match);
-  },
 
   // `(?:child_process|cp)[\s\S]*?(?:exec|spawn…)` lets the bridge run to the end
   // of the file: one match measured 3,608 characters and 109 lines, pairing an
@@ -190,6 +238,15 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
   // is an opaque token, not a sentence and not a placeholder.
   VG001: (match) => looksLikeSecretValue(match),
   VG062: (match) => looksLikeSecretValue(match),
+
+  // A statement whose values go through bind placeholders is parameterized:
+  // `db.prepare(\`UPDATE ${table} SET csv_data = ? WHERE id = ?\`).bind(...)`
+  // interpolates an identifier, not user input, and both rules read that as
+  // injection. Held to two conditions, so a query that binds one value and
+  // concatenates another still fires: there must be a placeholder, and no
+  // interpolated expression may read from the request.
+  VG010: (match, source, index) => sqlGuard(match, source, index),
+  VG123: (_match, source, index) => !isParameterized(statementAround(source, index)),
 
   // SSRF is a *server* being made to fetch a URL it should not. A module marked
   // `'use client'` runs in the browser, where the request leaves the user's own

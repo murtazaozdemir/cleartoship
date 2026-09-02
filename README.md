@@ -98,7 +98,7 @@ runtimes, React Native, Go and shell.
 
 27 upstream rules are **superseded** where ClearToShip's own AST check is more
 precise, 6 are **withheld** as measurably noisy, 10 React Native rules are
-**skipped as inapplicable** on a project that is not React Native, 8 carry a
+**skipped as inapplicable** on a project that is not React Native, 9 carry a
 **match guard** for a
 shape their regex cannot exclude (a `"link": true` lockfile entry has no
 integrity hash by design; `querySelectorAll` is not a SQL call; `eval()` inside
@@ -290,6 +290,13 @@ uploaded, and no database is connected to.
   excluded: one is a published CLI's entry point, the other is production schema.
   Across five dogfooded repos this moved 21 findings out of `critical` without
   hiding one of them.
+- **A bound parameter is not an injection.** `db.prepare(\`UPDATE ${table} SET
+  csv = ? WHERE id = ?\`).bind(...)` interpolates an identifier while its values
+  go through placeholders — the correct pattern, and the one a SQL-injection
+  regex reads as the bug. Both SQL rules now read the whole statement and the
+  call chained to it, and stand down when the values are bound. They still fire
+  when any interpolation reads from the request, so a query that binds one value
+  and concatenates another is reported.
 - **A rule that cannot apply here is not run.** The vendored ruleset covers
   ground this project may not stand on: certificate pinning and WebView
   hardening are React Native concerns, and a browser will not let a page pin a

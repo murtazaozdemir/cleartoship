@@ -159,6 +159,22 @@ test('where a file lives changes what a finding in it costs', async () => {
   );
 });
 
+test('a bound parameter is not an injection; a raw interpolation still is', async () => {
+  const clean = await scan({ root: CLEAN, offline: true });
+  assert.deepEqual(
+    clean.findings.map((f) => `${f.id} ${f.file}:${f.line}`),
+    [],
+    'binding the values and interpolating only the table name is the correct pattern',
+  );
+
+  // The same rule still fires where nothing is bound at all.
+  const bad = await scan({ root: VULNERABLE, offline: true });
+  assert.ok(
+    bad.findings.some((f) => f.file === 'scripts/seed.mjs' && f.id === 'VG010'),
+    'an interpolated query with no binds is still reported',
+  );
+});
+
 test('path classification reads directories, not filenames', () => {
   assert.equal(pathClass('transfer-tests/errormonitor-tests.mjs'), 'non-production');
   assert.equal(pathClass('app/e2e-tests/login.ts'), 'non-production');

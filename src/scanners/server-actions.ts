@@ -725,7 +725,14 @@ export const serverActionsScanner: Scanner = {
           });
         }
 
-        if (writes && info.hasAuth && !info.ownerScoped && info.params > 0) {
+        // A Route Handler always has a `request` parameter, so "takes an
+        // argument" says nothing about it — `POST /api/auth/logout`, which
+        // resolves the session and destroys it, was reported as an IDOR. What
+        // the rule needs is a real write keyed on something the caller sent.
+        const idorShaped = isRoute
+          ? info.hasMutation && info.readsRequestInput
+          : info.params > 0;
+        if (writes && info.hasAuth && !info.ownerScoped && idorShaped) {
           push({
             id: 'CTS004',
             severity: 'medium',
