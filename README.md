@@ -97,7 +97,9 @@ Dockerfiles, Terraform, GitHub Actions pinning, prompt injection and MCP tool
 runtimes, React Native, Go and shell.
 
 27 upstream rules are **superseded** where ClearToShip's own AST check is more
-precise, 6 are **withheld** as measurably noisy, 5 carry a **match guard** for a
+precise, 6 are **withheld** as measurably noisy, 10 React Native rules are
+**skipped as inapplicable** on a project that is not React Native, 8 carry a
+**match guard** for a
 shape their regex cannot exclude (a `"link": true` lockfile entry has no
 integrity hash by design; `querySelectorAll` is not a SQL call; `eval()` inside
 a sentence about eval is prose), and 3 name-heuristic rules are
@@ -288,6 +290,12 @@ uploaded, and no database is connected to.
   excluded: one is a published CLI's entry point, the other is production schema.
   Across five dogfooded repos this moved 21 findings out of `critical` without
   hiding one of them.
+- **A rule that cannot apply here is not run.** The vendored ruleset covers
+  ground this project may not stand on: certificate pinning and WebView
+  hardening are React Native concerns, and a browser will not let a page pin a
+  certificate at all, so those rules are skipped unless the project actually is
+  React Native. Likewise the "no request-body size limit" rule, whose own text
+  says Next.js already imposes one. The report names what it skipped and why.
 - **Mass assignment means the payload arrives whole.** CTS002 and CTS043 fire when
   the object the caller sent reaches the columns — `update(body)`,
   `data: { ...input }`, including one level down where Prisma and Drizzle put it.

@@ -44,6 +44,15 @@ export function detectFramework(root: string, files: string[]): FrameworkInfo {
     hasDep(pkg, '@supabase/auth-helpers-nextjs') ||
     exists(join(root, 'supabase'));
 
+  // Expo counts: it is React Native underneath, and the mobile rules apply.
+  const reactNative =
+    hasDep(pkg, 'react-native') ||
+    hasDep(pkg, 'expo') ||
+    exists(join(root, 'metro.config.js')) ||
+    exists(join(root, 'metro.config.ts')) ||
+    exists(join(root, 'app.json')) &&
+      /\b(expo|react-native)\b/.test(read(join(root, 'app.json')) ?? '');
+
   const info: FrameworkInfo = {
     nextjs,
     supabase,
@@ -55,6 +64,7 @@ export function detectFramework(root: string, files: string[]): FrameworkInfo {
     python:
       exists(join(root, 'requirements.txt')) ||
       exists(join(root, 'pyproject.toml')),
+    reactNative,
     describe() {
       const parts: string[] = [];
       if (this.nextjs === 'app-router') parts.push('Next.js (App Router)');
@@ -67,6 +77,7 @@ export function detectFramework(root: string, files: string[]): FrameworkInfo {
       if (this.nextAuth) parts.push('NextAuth');
       if (this.stripe) parts.push('Stripe');
       if (this.python) parts.push('Python');
+      if (this.reactNative) parts.push('React Native');
       return parts.length ? parts.join(' + ') : 'generic JavaScript/TypeScript';
     },
   };

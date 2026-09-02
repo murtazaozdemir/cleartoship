@@ -65,6 +65,7 @@ export interface FrameworkInfo {
   nextAuth: boolean;
   stripe: boolean;
   python: boolean;
+  reactNative: boolean;
   /** Human-readable one-liner for the CLI header. */
   describe(): string;
 }

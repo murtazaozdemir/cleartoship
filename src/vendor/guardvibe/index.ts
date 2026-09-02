@@ -76,5 +76,15 @@ export const GUARDVIBE_CVE_RULE_IDS: ReadonlySet<string> = new Set(
   cveVersionRules.map((r) => r.id),
 );
 
+/**
+ * Ids of the React Native ruleset. Certificate pinning, WebView hardening and
+ * AsyncStorage hygiene are mobile concerns; on a web or server project they are
+ * not weaker advice, they are inapplicable — a browser will not let a page pin a
+ * certificate at all. Skipped unless the project actually is React Native.
+ */
+export const GUARDVIBE_REACT_NATIVE_RULE_IDS: ReadonlySet<string> = new Set(
+  reactNativeRules.map((r) => r.id),
+);
+
 export const GUARDVIBE_ATTRIBUTION =
   'GuardVibe (github.com/goklab/guardvibe), Copyright 2026 GokLab, Apache-2.0';

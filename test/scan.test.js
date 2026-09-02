@@ -11,6 +11,7 @@ import { splitStatements, normaliseTable, isAlwaysTrue, clauseAfter } from '../d
 import { editDistance, nearestPopular, POPULAR_NPM } from '../dist/data/popular.js';
 import { Suppressions } from '../dist/utils/suppress.js';
 import { Gitignore } from '../dist/utils/gitignore.js';
+import { pathClass } from '../dist/utils/paths.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VULNERABLE = join(here, 'fixtures', 'vulnerable-app');
@@ -156,6 +157,21 @@ test('where a file lives changes what a finding in it costs', async () => {
     app.every((f) => !/build or maintenance tooling/.test(f.detail)),
     'application code is not demoted',
   );
+});
+
+test('path classification reads directories, not filenames', () => {
+  assert.equal(pathClass('transfer-tests/errormonitor-tests.mjs'), 'non-production');
+  assert.equal(pathClass('app/e2e-tests/login.ts'), 'non-production');
+  assert.equal(pathClass('scripts/seed.mjs'), 'dev-tooling');
+  assert.equal(pathClass('next.config.ts'), 'dev-tooling');
+  // A file that merely contains one of the words is production code.
+  assert.equal(pathClass('src/lib/spec-parser.ts'), 'production');
+  assert.equal(pathClass('src/app/api/document-samples/route.ts'), 'production');
+  assert.equal(pathClass('src/features/demo-billing/index.ts'), 'production');
+  assert.equal(pathClass('src/app/page.tsx'), 'production');
+  // bin/ is a published CLI's entry point; migrations are production schema.
+  assert.equal(pathClass('bin/cli.js'), 'production');
+  assert.equal(pathClass('migrations/001_init.sql'), 'production');
 });
 
 test('mass assignment is the payload arriving whole, not any write of caller input', async () => {

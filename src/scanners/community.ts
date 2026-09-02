@@ -1,7 +1,11 @@
 import { read, rel, lineAt, snippetAt, languagesFor } from '../utils/files.js';
 import { Suppressions } from '../utils/suppress.js';
 import { adjustForPath } from '../utils/paths.js';
-import { GUARDVIBE_RULES, GUARDVIBE_ATTRIBUTION } from '../vendor/guardvibe/index.js';
+import {
+  GUARDVIBE_RULES,
+  GUARDVIBE_ATTRIBUTION,
+  GUARDVIBE_REACT_NATIVE_RULE_IDS,
+} from '../vendor/guardvibe/index.js';
 import { emptyResult } from '../types.js';
 import type { ProjectContext, ScanResult, Scanner, Severity } from '../types.js';
 
@@ -187,6 +191,20 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
   VG001: (match) => looksLikeSecretValue(match),
   VG062: (match) => looksLikeSecretValue(match),
 
+  // SSRF is a *server* being made to fetch a URL it should not. A module marked
+  // `'use client'` runs in the browser, where the request leaves the user's own
+  // machine and crosses no trust boundary of yours.
+  VG120: (_match, source) => !/^\s*(['"])use client\1/m.test(source.slice(0, 400)),
+
+  // The name list is prefix-matched with `\w*` after it, so `hashPage === 'x'`
+  // and `tokenCount === 3` read as secret comparisons. A timing attack needs the
+  // *secret itself* on one side, so the identifier has to be one of those words,
+  // not merely start with one.
+  VG106: (match) => {
+    const identifier = /^[A-Za-z_$][\w$]*/.exec(match)?.[0] ?? '';
+    return /(secret|token|apikey|api_key|signature|hmac|hash|digest|webhook)$/i.test(identifier);
+  },
+
   // "An attacker can request the entire table" is the rule's premise, and a
   // query filtered to the caller's own rows does not let them. An unbounded
   // fetch of your own data is a scalability question, not a security finding.
@@ -212,6 +230,30 @@ function severityOf(value: string): Severity {
     : 'medium';
 }
 
+/**
+ * Rules that only apply on a platform this project is not. Skipping them is not
+ * a judgement about the rule — it is that the advice cannot be followed here.
+ */
+function inapplicable(ctx: ProjectContext): { ids: ReadonlySet<string>; why: string[] } {
+  const ids = new Set<string>();
+  const why: string[] = [];
+
+  if (!ctx.framework.reactNative) {
+    for (const id of GUARDVIBE_REACT_NATIVE_RULE_IDS) ids.add(id);
+    why.push(`${GUARDVIBE_REACT_NATIVE_RULE_IDS.size} React Native rules (not a mobile project)`);
+  }
+
+  // VG132 asks for an explicit request-body size limit and says itself that
+  // Next.js and Vercel already impose one. On a Next.js project it is advice
+  // about a limit the framework has already applied.
+  if (ctx.framework.nextjs !== null) {
+    ids.add('VG132');
+    why.push('VG132 body-size limit (Next.js sets one by default)');
+  }
+
+  return { ids, why };
+}
+
 export const communityScanner: Scanner = {
   name: `Community ruleset (${GUARDVIBE_RULES.length - SUPERSEDED.size - WITHHELD.size} rules)`,
 
@@ -221,7 +263,10 @@ export const communityScanner: Scanner = {
 
   async run(ctx): Promise<ScanResult> {
     const result = emptyResult();
-    const active = GUARDVIBE_RULES.filter((r) => !SUPERSEDED.has(r.id) && !WITHHELD.has(r.id));
+    const platform = inapplicable(ctx);
+    const active = GUARDVIBE_RULES.filter(
+      (r) => !SUPERSEDED.has(r.id) && !WITHHELD.has(r.id) && !platform.ids.has(r.id),
+    );
     const seen = new Set<string>();
     let filesScanned = 0;
 
@@ -291,7 +336,8 @@ export const communityScanner: Scanner = {
       passed: result.findings.every((f) => f.severity !== 'critical'),
       note:
         `${SUPERSEDED.size} superseded by ClearToShip's AST checks, ${WITHHELD.size} withheld as noisy, ` +
-        `${MANIFEST_ONLY.size} manifest-only (not run over lockfiles)`,
+        `${MANIFEST_ONLY.size} manifest-only (not run over lockfiles)` +
+        (platform.why.length ? `; skipped as inapplicable: ${platform.why.join(', ')}` : ''),
     });
     return result;
   },

@@ -11,9 +11,18 @@ import type { Severity } from '../types.js';
  */
 export type PathClass = 'production' | 'dev-tooling' | 'non-production';
 
-/** Tests, fixtures, examples and docs: the code is there to be read, not run. */
+/**
+ * Tests, fixtures, examples and docs: the code is there to be read, not run.
+ *
+ * The test family accepts an affix — `transfer-tests/`, `integration_test/` —
+ * because that is how those directories get named. The rest are matched whole
+ * on purpose: `demo` is a fixture directory, but `demo-billing/` may well be a
+ * shipped feature, and quietly downgrading it would be the worse mistake.
+ * Every segment must be followed by a slash — these are directories. A file
+ * named `spec-parser.ts` is production code that happens to parse specs.
+ */
 const NON_PRODUCTION =
-  /(^|\/)(tests?|__tests__|__mocks__|__fixtures__|fixtures?|spec|specs|examples?|docs?|demo|samples?|e2e|cypress|playwright|stories)(\/|$)|\.(test|spec|stories|fixture)\.[a-z]+$/i;
+  /(^|\/)(?:(?:[\w.]+[-_])?(?:tests?|specs?|e2e|fixtures?|mocks?)(?:[-_][\w.]+)?|__tests__|__mocks__|__fixtures__|examples?|docs?|demo|samples?|cypress|playwright|stories)\/|\.(test|spec|stories|fixture)\.[a-z]+$/i;
 
 /**
  * Build and maintenance tooling. It runs on a developer's machine or in CI,
@@ -25,7 +34,7 @@ const NON_PRODUCTION =
  * point. So is `migrations/`, which is the production schema.
  */
 const DEV_TOOLING =
-  /(^|\/)(scripts?|tools?|tooling|\.github|\.husky|\.circleci|seeds?|benchmarks?|codegen)(\/|$)|(^|\/)[^/]*\.config\.[cm]?[jt]s$|(^|\/)(Makefile|Dockerfile[^/]*|docker-compose[^/]*\.ya?ml)$/i;
+  /(^|\/)(scripts?|tools?|tooling|\.github|\.husky|\.circleci|seeds?|benchmarks?|codegen)\/|(^|\/)[^/]*\.config\.[cm]?[jt]s$|(^|\/)(Makefile|Dockerfile[^/]*|docker-compose[^/]*\.ya?ml)$/i;
 
 export function pathClass(relPath: string): PathClass {
   if (NON_PRODUCTION.test(relPath)) return 'non-production';
