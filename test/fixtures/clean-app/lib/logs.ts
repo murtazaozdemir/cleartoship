@@ -9,3 +9,15 @@ export async function recentLogs(table: string, limit: number) {
     .bind(limit)
     .all()
 }
+
+// Prisma's varargs form: the placeholder skeleton is built in code, every value
+// is passed after the query. `Unsafe` names who builds the string, not whether
+// the values are bound.
+export async function insertLookups(rows: { id: string; value: string }[]) {
+  const placeholders = rows.map(() => '(?, ?)').join(', ')
+  const params = rows.flatMap((r) => [r.id, r.value])
+  return db.$executeRawUnsafe(
+    `INSERT OR IGNORE INTO lookups (id, value) VALUES ${placeholders}`,
+    ...params,
+  )
+}

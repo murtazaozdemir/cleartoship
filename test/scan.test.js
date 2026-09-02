@@ -159,6 +159,19 @@ test('where a file lives changes what a finding in it costs', async () => {
   );
 });
 
+test('raw-SQL helpers are judged on whether the values are bound', async () => {
+  const bad = await scan({ root: VULNERABLE, offline: true });
+  assert.ok(
+    bad.findings.some((f) => f.file === 'app/actions/raw-sql.ts' && f.id === 'VG433'),
+    "`$executeRawUnsafe` with the caller's value inside the SQL text is reported",
+  );
+
+  // The same call, with the placeholder skeleton built in code and every value
+  // passed after the query, is the documented safe form.
+  const clean = await scan({ root: CLEAN, offline: true });
+  assert.deepEqual(clean.findings.map((f) => `${f.id} ${f.file}`), []);
+});
+
 test('a CVE in a build-time dependency is not a shipping vulnerability', async () => {
   const result = await scan({ root: INDIRECT, offline: true });
   const cve = result.findings.filter((f) => f.id === 'VG903');

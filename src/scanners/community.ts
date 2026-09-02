@@ -174,6 +174,13 @@ function isParameterized(statement: string): boolean {
   // covers the idioms a placeholder scan cannot see: `IN (${ids.map(() =>
   // '?').join(',')})`, or a constant SQL fragment interpolated beside binds.
   if (/\.\s*bind\s*\(\s*[^)\s]/.test(statement)) return true;
+  // The other calling convention: the values follow the query.
+  // `$executeRawUnsafe(\`… VALUES ${placeholders}\`, ...params)`,
+  // `db.query(sql, [id])`. A closing backtick with an argument after it.
+  if (/`\s*,\s*[^)\s]/.test(statement)) return true;
+  // An interpolation that builds placeholders is parameterizing too:
+  // `chunk.map(() => "(?, ?, ?)").join(", ")`.
+  if (/\$\{[^}]*['"][^'"]*\?[^'"]*['"]/.test(statement)) return true;
   // Otherwise look for the placeholders themselves — with interpolations
   // dropped first, so a JavaScript ternary is not read as a `?` parameter.
   return BIND_PLACEHOLDER.test(statement.replace(/\$\{[^}]*\}/g, ' '));
@@ -272,6 +279,12 @@ const MATCH_GUARDS: Record<string, (match: string, source: string, index: number
     const after = source.slice(index, index + 60);
     return !/^(?:eval|new\s+Function)\s*\(\s*(['"])[A-Za-z_$][\w$]*\1\s*\)/.test(after);
   },
+
+  // `$executeRawUnsafe` is named for who builds the SQL string, not for whether
+  // values can be bound — Prisma takes positional parameters after the query.
+  // `$executeRawUnsafe(\`INSERT … VALUES ${placeholders}\`, ...params)`, where
+  // `placeholders` is `chunk.map(() => "(?, ?)").join(",")`, binds every value.
+  VG433: (_match, source, index) => !isParameterized(statementAround(source, index)),
 
   // SSRF is a *server* being made to fetch a URL it should not. A module marked
   // `'use client'` runs in the browser, where the request leaves the user's own
