@@ -43,6 +43,32 @@ export function buildFixtures() {
     ].join('\n'),
   );
 
+  // The gitignore fixture's ignored files are generated for the same reason the
+  // .env below is, and then some: git itself refuses to track them, which is
+  // exactly what they are testing. Committing them would need `git add -f`, and
+  // a checkout that had them tracked would no longer be the case under test.
+  mkdirSync(join(INDIRECT, 'vendored'), { recursive: true });
+  writeFileSync(
+    join(INDIRECT, 'vendored', 'insecure.ts'),
+    [
+      "// A copy of somebody else's project, kept for reference. Not ours, not",
+      '// shipped, not in git — and every finding in here is noise.',
+      "export const stripe = 'sk_live_51NqAbCdEfGhIjKlMnOpQrStU'",
+      'export function run(cmd: string) {',
+      '  return eval(cmd)',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  writeFileSync(
+    join(INDIRECT, 'settings.local.json'),
+    JSON.stringify(
+      { note: 'matched by *.local.json', token: 'ghp_A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8' },
+      null,
+      2,
+    ) + '\n',
+  );
+
   // The gitignore fixture needs a real, credential-shaped `.env` that its own
   // .gitignore excludes — the case the scanner must still read, since a secret
   // sitting in an ignored file is on your disk either way.
