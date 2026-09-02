@@ -12,3 +12,6 @@ _reference/
 # whatever connection last ran wrangler (city, postcode, lat/long, ISP), and
 # wrangler-account.json holds the Cloudflare account id and account name.
 .wrangler/
+
+# Private working notes — never commit these (market position, other repos, account details).
+NOTES.private.md
