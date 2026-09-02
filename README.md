@@ -109,7 +109,12 @@ could act on. Each list carries a reason per rule in
 `src/scanners/community.ts`. Run `--no-community` to use only ClearToShip's
 rules. See [ATTRIBUTION.md](ATTRIBUTION.md).
 
-Findings map to **OWASP Top 10:2025** and CWE.
+Findings map to **OWASP Top 10:2025** and CWE, and the ones that are about an
+LLM or an agent carry an **OWASP Top 10 for LLM Applications** category as well
+(in `meta.llm`). The vendored ruleset labels categories inconsistently —
+Injection arrives as both `A02:2025` and `A03:2025`, Security Misconfiguration
+as `A05:2025` and `A05:2021` — so labels are normalised to one taxonomy on the
+way out, with the original kept in `meta.owaspUpstream`.
 
 ## OWASP Top 10:2025 coverage — honest version
 
@@ -127,7 +132,37 @@ it is strongest exactly where AI-generated code fails. Coverage by category:
 | **A09** Logging & Alerting Failures | 🟡 Targeted | **Secrets / PII written to logs** (CTS070) — the statically knowable slice |
 | **A10** Mishandling Exceptions | 🟡 Targeted | **Fail-open / swallowed error on a security check** (CTS071) |
 | **A08** Data & Integrity Failures | 🟡 Targeted | Unverified webhooks (CTS042), **insecure deserialization** (CTS072) |
-| **A06** Insecure Design | 🔴 Not statically detectable | Missing threat modeling is an architecture concern — no static scanner covers it, and we don't pretend to |
+| **A06** Insecure Design | 🔴 Not detectable first-party | Missing threat modeling is an architecture concern. 13 vendored rules carry the label; none of ClearToShip's own do, deliberately |
+
+Counts, measured across the vendored ruleset after normalisation: A01 121,
+A05 112, A04 78, A02 59, A03 32, A07 17, A06 13, A08 11, A09 2. ClearToShip's
+own 45 rules add A01 19, A03 9, A04 7, A08 3, A05 2, and one each for A07, A09
+and A10 — which is the category no vendored rule reaches.
+
+## OWASP Top 10 for LLM Applications — coverage
+
+Worth stating separately, because "we cover the OWASP Top 10" and "we cover the
+LLM Top 10" are different claims and only one of them is usually meant. **41
+vendored rules map to 7 of the 10 LLM categories**, and first-party findings
+join them when the finding itself names a provider — a hardcoded OpenAI key
+(CTS030), an AI client configured to run in the browser (CTS045).
+
+| Category | Rules | What we detect |
+| --- | --- | --- |
+| **LLM01** Prompt Injection | 12 | User input, fetched pages and query results reaching a prompt unbounded; instructions hidden in a tool description |
+| **LLM02** Sensitive Information Disclosure | 11 (+ CTS030, CTS045) | Provider keys in client code or a `NEXT_PUBLIC_` variable, `dangerouslyAllowBrowser`, a base URL pointed at somebody else's endpoint |
+| **LLM06** Excessive Agency | 9 | MCP servers with permissive tool access, `allowedTools` wildcards, auto-approve bypassing the permission prompt, settings hooks that fetch or pipe |
+| **LLM05** Improper Output Handling | 4 | Model output rendered as raw HTML or markdown images, or used in a dangerous sink |
+| **LLM08** Vector & Embedding Weaknesses | 3 | Retrieval results interpolated into a prompt, unauthenticated vector upserts |
+| **LLM03** Supply Chain | 1 | MCP server pinned to `@latest` |
+| **LLM07** System Prompt Leakage | 1 | System prompt returned in an error response |
+| **LLM04** Data & Model Poisoning | — | Needs training-pipeline and dataset provenance, which is not in the source tree |
+| **LLM09** Misinformation | — | A model-output-quality property; nothing static to check |
+| **LLM10** Unbounded Consumption | — | Real and detectable in principle (no token ceiling, no rate limit on an inference route) — an honest gap, not a claim |
+
+The mapping is derived from each rule's own text rather than a hand-kept list of
+ids, so re-vendoring upstream cannot silently drop it, and it is deliberately
+conservative: a rule that does not clearly belong to a category gets none.
 
 Two honest points a reviewer would raise, answered up front:
 

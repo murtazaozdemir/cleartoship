@@ -239,6 +239,30 @@ test('mass assignment is the payload arriving whole, not any write of caller inp
   );
 });
 
+test('findings carry one OWASP taxonomy, plus an LLM category where it applies', async () => {
+  const result = await scan({ root: VULNERABLE, offline: true });
+
+  // The vendored ruleset labels Injection as both A02:2025 and A03:2025, and
+  // Security Misconfiguration as A05:2025 and A05:2021. Whatever went in, one
+  // spelling comes out.
+  const categories = new Set(result.findings.map((f) => f.owasp).filter(Boolean));
+  for (const c of categories) {
+    assert.match(
+      c,
+      /^(A\d{2}:2025 - |API\d:2023)/,
+      `${c} is neither the 2025 web list nor an API Top 10 label`,
+    );
+  }
+  assert.equal([...categories].filter((c) => /Injection/.test(c)).length, 1, 'one Injection');
+
+  // A hardcoded provider key is an LLM finding as well as a web one; an npm
+  // install hook that shells out is not, however much it looks like a "hook".
+  const key = result.findings.find((f) => f.id === 'CTS030' && /OpenAI/.test(f.title));
+  assert.equal(key.meta.llm, 'LLM02:2025 - Sensitive Information Disclosure');
+  const hook = result.findings.find((f) => f.id === 'CTS028');
+  assert.equal(hook.meta?.llm, undefined, 'a postinstall hook is supply chain, not excessive agency');
+});
+
 test('the scan stays inside the directory it was given', async () => {
   const result = await scan({ root: INDIRECT, offline: true });
 

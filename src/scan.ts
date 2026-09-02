@@ -6,6 +6,7 @@ import { detectFramework } from './utils/detect.js';
 import { SCANNERS, communityScanner } from './scanners/index.js';
 import { GUARDVIBE_CVE_RULE_IDS } from './vendor/guardvibe/index.js';
 import { SEVERITY_ORDER } from './types.js';
+import { normaliseOwasp, llmCategory } from './utils/owasp.js';
 import type { CheckSummary, Finding, ProjectContext, Severity } from './types.js';
 
 export interface ScanOptions {
@@ -99,6 +100,24 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
     const floor = SEVERITY_ORDER[options.minSeverity];
     filtered = filtered.filter((f) => SEVERITY_ORDER[f.severity] >= floor);
   }
+
+  // One taxonomy on the way out, and a second label for the findings that are
+  // about an LLM or an agent rather than a web app. Both are applied here, so
+  // every scanner's output is consistent without each one having to know.
+  filtered = filtered.map((f) => {
+    const canonical = normaliseOwasp(f.owasp);
+    const llm = llmCategory(`${f.title} ${f.detail}`);
+    if (!canonical && !llm) return f;
+    return {
+      ...f,
+      owasp: canonical ?? f.owasp,
+      meta: {
+        ...f.meta,
+        ...(canonical && canonical !== f.owasp ? { owaspUpstream: f.owasp } : {}),
+        ...(llm ? { llm } : {}),
+      },
+    };
+  });
 
   filtered.sort((a, b) => {
     const bySeverity = SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity];
