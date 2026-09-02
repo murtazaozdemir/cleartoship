@@ -56,6 +56,9 @@ test('vulnerable fixture: reports every rule it is built to trigger', async () =
     'CTS050', // overlapping permissive policies
     'CTS051', // storage policy allows listing every object
     'CTS052', // SECURITY DEFINER function callable by anon
+    'CTS080', // caller text concatenated into a prompt (LLM01)
+    'CTS081', // model call with no token ceiling (LLM10)
+    'CTS082', // system prompt shipped to the browser (LLM07)
   ]) {
     assert.ok(found.has(expected), `expected ${expected} to be reported`);
   }
@@ -237,6 +240,25 @@ test('mass assignment is the payload arriving whole, not any write of caller inp
     [],
     'reading named fields into an explicit column list is the safe pattern, spread or not',
   );
+});
+
+test('the LLM rules fire on the shape they name, and not on the safe one', async () => {
+  const bad = await scan({ root: VULNERABLE, offline: true });
+  const byId = (id) => bad.findings.find((f) => f.id === id);
+
+  // Caller text interpolated into the system message.
+  assert.equal(byId('CTS080').meta.llm, 'LLM01:2025 - Prompt Injection');
+  assert.equal(byId('CTS080').file, 'app/ai/assistant.ts');
+  // No max_tokens on a request-reachable model call.
+  assert.equal(byId('CTS081').meta.llm, 'LLM10:2025 - Unbounded Consumption');
+  // A system prompt in a 'use client' module.
+  assert.equal(byId('CTS082').meta.llm, 'LLM07:2025 - System Prompt Leakage');
+  assert.equal(byId('CTS082').file, 'app/ai/panel.tsx');
+
+  // The clean fixture calls the same API with the caller's text as a separate
+  // user message and a ceiling on the answer. Nothing to report.
+  const clean = await scan({ root: CLEAN, offline: true });
+  assert.deepEqual(clean.findings.map((f) => `${f.id} ${f.file}`), []);
 });
 
 test('findings carry one OWASP taxonomy, plus an LLM category where it applies', async () => {

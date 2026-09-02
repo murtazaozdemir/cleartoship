@@ -32,6 +32,15 @@ const AUTH_WRAPPERS = [
   'createServerAction', 'safeAction', 'guarded', 'requireAuth', 'withGuard',
 ];
 
+/**
+ * Calls that end in a mutation verb but write nothing:
+ * `openai.chat.completions.create(...)` is an outbound API call, and reporting
+ * it as "performs a database mutation" is a claim about code that is not there.
+ * The AI-specific rules cover what that call actually risks.
+ */
+const NOT_A_DATA_WRITE =
+  /(^|\.)(chat\.completions|completions|responses|messages|embeddings|images|audio|moderations|files|threads|runs|assistants)\.(create|update)$/;
+
 /** Data-writing calls across Supabase, Prisma, Drizzle, Mongoose and raw SQL. */
 const MUTATION_CALLS = new Set([
   'insert', 'update', 'upsert', 'delete', 'create', 'createMany', 'updateMany',
@@ -319,7 +328,7 @@ function analyseFunction(
     if (matchesAny(full, AUTH_WRAPPERS)) info.hasAuth = true;
     if (matchesAny(full, SIGNATURE_CHECKS)) info.hasSignatureCheck = true;
     if (VALIDATION_CALLS.has(tail)) info.hasValidation = true;
-    if (MUTATION_CALLS.has(tail)) {
+    if (MUTATION_CALLS.has(tail) && !NOT_A_DATA_WRITE.test(full)) {
       info.hasMutation = true;
       if (info.mutationLine === null) {
         info.mutationLine = inner.node.loc?.start.line ?? info.line;

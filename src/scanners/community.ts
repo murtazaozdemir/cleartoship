@@ -272,6 +272,16 @@ const MATCH_GUARDS: Record<
   // `placeholders` is `chunk.map(() => "(?, ?)").join(",")`, binds every value.
   VG433: (_match, source, index) => !isParameterized(statementAround(source, index)),
 
+  // The rule's own fix text is "add an auth check at the top of every Server
+  // Action that calls a paid LLM provider" — but the pattern only sees a
+  // `'use server'` module that constructs a provider and exports a function. It
+  // cannot tell whether the auth check is already there, and CTS001 can:
+  // matching on the module's own vocabulary keeps this from contradicting it.
+  VG1025: (_match, source) =>
+    !/\b(auth\.getUser|getServerSession|getServerAuthSession|requireUser|requireAuth|requireUserId|currentUser|handleSessionToken|verifyRequest|getSession)\s*\(/.test(
+      source,
+    ),
+
   // SSRF is a *server* being made to fetch a URL it should not. A module marked
   // `'use client'` runs in the browser, where the request leaves the user's own
   // machine and crosses no trust boundary of yours.

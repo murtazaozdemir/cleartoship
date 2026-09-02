@@ -79,6 +79,14 @@ reaches a manifest.
 | **CTS033** | critical | `'use client'` component reaching for a server-only secret |
 | **GL-\*** | high/critical | 219 further credential providers, vendored from [gitleaks](https://github.com/gitleaks/gitleaks) (MIT), gated on Shannon entropy |
 
+**LLM & agent risks** — the detectable slices of the OWASP Top 10 for LLM Apps
+
+| Rule | Severity | What it catches |
+| --- | --- | --- |
+| **CTS080** | high | Caller-supplied text interpolated into the instruction text itself — prompt injection by construction, not by filter (LLM01) |
+| **CTS081** | medium | A request-reachable model call with no `max_tokens` ceiling: the answer's length, and its bill, chosen by whoever wrote the input (LLM10) |
+| **CTS082** | medium | A system prompt in a `'use client'` module — compiled into the bundle, readable in devtools (LLM07) |
+
 **Logging, error-handling & deserialization** — the detectable slices of A08/A09/A10
 
 | Rule | Severity | What it catches |
@@ -149,20 +157,26 @@ join them when the finding itself names a provider — a hardcoded OpenAI key
 
 | Category | Rules | What we detect |
 | --- | --- | --- |
-| **LLM01** Prompt Injection | 12 | User input, fetched pages and query results reaching a prompt unbounded; instructions hidden in a tool description |
+| **LLM01** Prompt Injection | 12 + **CTS080** | Caller text interpolated into the instruction text itself; fetched pages and query results reaching a prompt unbounded; instructions hidden in a tool description |
 | **LLM02** Sensitive Information Disclosure | 11 (+ CTS030, CTS045) | Provider keys in client code or a `NEXT_PUBLIC_` variable, `dangerouslyAllowBrowser`, a base URL pointed at somebody else's endpoint |
 | **LLM06** Excessive Agency | 9 | MCP servers with permissive tool access, `allowedTools` wildcards, auto-approve bypassing the permission prompt, settings hooks that fetch or pipe |
 | **LLM05** Improper Output Handling | 4 | Model output rendered as raw HTML or markdown images, or used in a dangerous sink |
 | **LLM08** Vector & Embedding Weaknesses | 3 | Retrieval results interpolated into a prompt, unauthenticated vector upserts |
 | **LLM03** Supply Chain | 1 | MCP server pinned to `@latest` |
-| **LLM07** System Prompt Leakage | 1 | System prompt returned in an error response |
-| **LLM04** Data & Model Poisoning | — | Needs training-pipeline and dataset provenance, which is not in the source tree |
-| **LLM09** Misinformation | — | A model-output-quality property; nothing static to check |
-| **LLM10** Unbounded Consumption | — | Real and detectable in principle (no token ceiling, no rate limit on an inference route) — an honest gap, not a claim |
+| **LLM07** System Prompt Leakage | 1 + **CTS082** | A system prompt held in a `'use client'` module, so it ships in the bundle; a prompt returned in an error response |
+| **LLM10** Unbounded Consumption | **CTS081** | A request-reachable model call with no `max_tokens` ceiling — the answer's length, and its cost, decided by whoever wrote the input |
+| **LLM04** Data & Model Poisoning | — | Needs training-pipeline and dataset provenance. Nothing in a web app's source tree answers it, and a rule that pretended otherwise would be box-checking |
+| **LLM09** Misinformation | — | A property of what the model says, not of the code that calls it. The adjacent detectable case — model output driving a security decision — would be a real rule, and is not written yet |
 
 The mapping is derived from each rule's own text rather than a hand-kept list of
 ids, so re-vendoring upstream cannot silently drop it, and it is deliberately
 conservative: a rule that does not clearly belong to a category gets none.
+
+**Eight of ten have first-party or vendored detection. Two do not, and will not
+get a rule for the sake of the table** — LLM04 needs artefacts that are not in
+the repository, and LLM09 is about the truthfulness of an answer. A tool that
+claimed those would be lying about what it checked, which is the failure mode
+this project exists to avoid.
 
 Two honest points a reviewer would raise, answered up front:
 
