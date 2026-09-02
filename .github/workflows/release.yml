@@ -7,6 +7,12 @@ on:
   push:
     tags: ['v*']
 
+# Releases queue, never cancel. Interrupting a publish mid-flight is how you get
+# a version that is half on the registry.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write   # for the GitHub Release
 
