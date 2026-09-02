@@ -12,7 +12,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    // TypeScript 7 no longer pulls every @types/* package into the global
+    // scope on its own, so `process` and `node:fs` stop resolving without
+    // this. Naming the one we want is also what we wanted anyway.
+    "types": ["node"]
   },
   "include": ["src/**/*"]
 }
