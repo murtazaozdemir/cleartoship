@@ -7,3 +7,8 @@ dist/
 !.env.example
 _reference/
 .cts-cache/
+
+# Wrangler local dev state. Never track this: cf.json caches the geolocation of
+# whatever connection last ran wrangler (city, postcode, lat/long, ISP), and
+# wrangler-account.json holds the Cloudflare account id and account name.
+.wrangler/
