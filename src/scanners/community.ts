@@ -289,6 +289,12 @@ const MATCH_GUARDS: Record<
   VG061: (_match, source, index) =>
     !/\b(expiresIn|exp\s*:|setExpirationTime)\b/.test(source.slice(index, index + 300)),
 
+  // `console.log("[App] Got idToken, running audit...")` is a progress message,
+  // not a logged credential: "idToken," satisfies the rule's `token` + delimiter
+  // because both sit inside the string. What matters is whether the *value* is
+  // being logged, and CTS070 checks that against the AST.
+  VG080: (match, source, index, spans) => !isInside(spans, index + match.length - 1, 'string'),
+
   // The "sink" half of the upload rule matched the word *upload* inside a
   // sentence — "Please upload a CSV file exported from Shopify". A filename
   // reaching a string is not a filename reaching a filesystem.
