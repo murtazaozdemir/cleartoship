@@ -97,7 +97,10 @@ Dockerfiles, Terraform, GitHub Actions pinning, prompt injection and MCP tool
 runtimes, React Native, Go and shell.
 
 27 upstream rules are **superseded** where ClearToShip's own AST check is more
-precise, 6 are **withheld** as measurably noisy, and 3 name-heuristic rules are
+precise, 6 are **withheld** as measurably noisy, 5 carry a **match guard** for a
+shape their regex cannot exclude (a `"link": true` lockfile entry has no
+integrity hash by design; `querySelectorAll` is not a SQL call; `eval()` inside
+a sentence about eval is prose), and 3 name-heuristic rules are
 **manifest-only** — they never run over a `package-lock.json`, where they matched
 ordinary transitive packages (`fast-glob`, `core-js`) and named nothing anyone
 could act on. Each list carries a reason per rule in

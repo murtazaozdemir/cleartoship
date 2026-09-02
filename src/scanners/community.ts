@@ -104,15 +104,70 @@ const MANIFEST_ONLY = new Map<string, string>([
   ['VG020', 'wildcard version; a transitive range is the dependency author\'s choice'],
 ]);
 
+/** SQL verbs strong enough that the call is about a database by itself. */
+const SQL_VERBS = /^(query|execute|raw|sql|prepare|QueryRow|QueryContext)$/i;
+
+/** Words that make a string a query rather than a sentence. */
+const SQL_KEYWORDS = /\b(select|insert\s+into|update|delete\s+from|from|where|values|set)\b/i;
+
+/** Whether `index` falls inside a quoted string on its own line. */
+function insideStringLiteral(source: string, index: number): boolean {
+  const lineStart = source.lastIndexOf('\n', index - 1) + 1;
+  let quote: string | null = null;
+  for (let i = lineStart; i < index; i++) {
+    const ch = source[i];
+    if (ch === '\\') {
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+    }
+  }
+  return quote !== null;
+}
+
 /**
  * Per-rule filters for a match shape the upstream regex cannot exclude on its
- * own. Applied to the matched text, not the whole file.
+ * own. Given the matched text plus where it sat, so a guard can look around it.
  */
-const MATCH_GUARDS: Record<string, (match: string) => boolean> = {
+const MATCH_GUARDS: Record<string, (match: string, source: string, index: number) => boolean> = {
   // A `"link": true` entry is a workspace or pnpm symlink resolved to a path on
   // disk rather than a tarball, so it has no integrity hash by design. Thirty of
   // them in one pnpm-managed lockfile, every one reported as a false critical.
   VG870: (match) => !/"link"\s*:\s*true/.test(match),
+
+  // The verb list has no word boundary in front of it and includes `all`, `get`
+  // and `run`, so `querySelectorAll(\`[name="${CSS.escape(k)}"]\`)` reads as a
+  // SQL call. Weak verbs have to be backed by something that looks like SQL;
+  // `query`, `execute` and friends stand on their own. A real interpolated
+  // `exec(\`INSERT INTO ...\`)` still matches — checked against one.
+  VG010: (match) => {
+    const verb = /^[A-Za-z_]+/.exec(match)?.[0] ?? '';
+    return SQL_VERBS.test(verb) || SQL_KEYWORDS.test(match);
+  },
+
+  // `(?:child_process|cp)[\s\S]*?(?:exec|spawn…)` lets the bridge run to the end
+  // of the file: one match measured 3,608 characters and 109 lines, pairing an
+  // `import … from "node:child_process"` with an `exec(` far below it and
+  // reporting the import as a critical. A real one is a single statement.
+  VG011: (match) => (match.match(/\n/g)?.length ?? 0) <= 1,
+
+  // "An attacker can request the entire table" is the rule's premise, and a
+  // query filtered to the caller's own rows does not let them. An unbounded
+  // fetch of your own data is a scalability question, not a security finding.
+  VG955: (match) =>
+    !/\bwhere\b[\s\S]{0,200}?\b(userId|user_id|ownerId|owner_id|orgId|org_id|organizationId|tenantId|tenant_id|workspaceId|workspace_id|accountId|account_id|teamId|team_id|shop|shopDomain|storeId|store_id)\b/i.test(
+      match,
+    ),
+
+  // `description: 'eval() executes arbitrary code…'` is prose about eval, not a
+  // call to it — and security tooling, which is a good deal of what gets
+  // scanned, is full of that prose. Code held in a string is not code running
+  // here; the eval that would run it is its own match, outside the quotes.
+  VG014: (_match, source, index) => !insideStringLiteral(source, index),
 };
 
 /** Paths where a match is a fixture or documentation rather than shipped code. */
@@ -171,7 +226,7 @@ export const communityScanner: Scanner = {
           }
           // Skipping a match must not skip the non-global `break` below, or a
           // rule without /g would rescan from zero forever.
-          if (guard && !guard(m[0])) {
+          if (guard && !guard(m[0], source, m.index)) {
             if (!re.global) break;
             continue;
           }
