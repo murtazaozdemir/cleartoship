@@ -10,6 +10,7 @@ import { scan } from '../dist/index.js';
 import { splitStatements, normaliseTable, isAlwaysTrue, clauseAfter } from '../dist/utils/sql.js';
 import { editDistance, nearestPopular, POPULAR_NPM } from '../dist/data/popular.js';
 import { Suppressions } from '../dist/utils/suppress.js';
+import { Gitignore } from '../dist/utils/gitignore.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const VULNERABLE = join(here, 'fixtures', 'vulnerable-app');
@@ -134,6 +135,73 @@ test('lockfile entries are judged as lockfile entries', async () => {
   for (const id of ['VG872', 'VG873', 'VG020']) {
     assert.equal(lock.some((f) => f.id === id), false, `${id} should not run over a lockfile`);
   }
+});
+
+test('what git ignores is not part of the project', async () => {
+  const result = await scan({ root: INDIRECT, offline: true });
+  const files = result.findings.map((f) => f.file);
+
+  assert.equal(
+    files.some((f) => f.startsWith('vendored/')),
+    false,
+    'vendored/ is gitignored, so its hardcoded key and eval() are somebody else\'s problem',
+  );
+  assert.equal(
+    files.includes('settings.local.json'),
+    false,
+    '*.local.json is gitignored too',
+  );
+  assert.ok(result.gitIgnoredCount >= 2, 'and the report says how many paths were skipped');
+
+  // An ignored `.env` is the exception: the secret is on disk either way, and
+  // CTS032 exists precisely to reason about whether the file is ignored.
+  const env = result.findings.filter((f) => f.file === '.env');
+  assert.equal(env.length, 1, `expected the .env secret, got ${env.map((f) => f.id).join(', ')}`);
+  assert.equal(env[0].id, 'CTS030');
+  assert.equal(
+    result.findings.some((f) => f.id === 'CTS032'),
+    false,
+    '.env IS covered by .gitignore here, so CTS032 must stay quiet',
+  );
+});
+
+test('--no-gitignore scans them anyway', async () => {
+  const result = await scan({ root: INDIRECT, offline: true, noGitignore: true });
+  const vendored = result.findings.filter((f) => f.file?.startsWith('vendored/'));
+  assert.ok(vendored.length > 0, 'the opt-out has to actually opt out');
+  assert.equal(result.gitIgnoredCount, 0);
+});
+
+test('gitignore patterns follow git, not glob intuition', () => {
+  const rules = Gitignore.empty().extend('/repo', [
+    'logs',            // bare name, any depth, file or directory
+    '/build',          // anchored to the root only
+    '*.log',           // suffix, any depth
+    'tmp/',            // directories only
+    'docs/**/draft',   // ** spans directories
+    'keep/*.txt',      // anchored by the embedded slash
+    '!keep/README.txt',// re-included
+  ].join('\n'));
+
+  assert.equal(rules.ignores('/repo/logs', true), true);
+  assert.equal(rules.ignores('/repo/src/logs', true), true, 'a bare name matches at any depth');
+  assert.equal(rules.ignores('/repo/build', true), true);
+  assert.equal(rules.ignores('/repo/src/build', true), false, 'a leading slash anchors');
+  assert.equal(rules.ignores('/repo/a/b/c.log', false), true);
+  assert.equal(rules.ignores('/repo/tmp', false), false, 'trailing slash means directories only');
+  assert.equal(rules.ignores('/repo/tmp', true), true);
+  assert.equal(rules.ignores('/repo/docs/a/b/draft', true), true);
+  assert.equal(rules.ignores('/repo/keep/notes.txt', false), true);
+  assert.equal(rules.ignores('/repo/keep/README.txt', false), false, 'a later ! re-includes');
+  assert.equal(rules.ignores('/elsewhere/logs', true), false, 'rules stop at their own tree');
+});
+
+test('a nested .gitignore overrides the one above it', () => {
+  const rules = Gitignore.empty()
+    .extend('/repo', '*.json')
+    .extend('/repo/config', '!*.json');
+  assert.equal(rules.ignores('/repo/a.json', false), true);
+  assert.equal(rules.ignores('/repo/config/a.json', false), false);
 });
 
 test('scan honours --ignore, --only and --min-severity equivalents', async () => {

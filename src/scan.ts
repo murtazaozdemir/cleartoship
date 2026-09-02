@@ -17,6 +17,8 @@ export interface ScanOptions {
   minSeverity?: Severity;
   /** Skip the vendored community ruleset, leaving only ClearToShip's own checks. */
   noCommunity?: boolean;
+  /** Scan files the repository ignores too. Off by default — see `walk`. */
+  noGitignore?: boolean;
   verbose?: boolean;
   onProgress?: (step: number, total: number, name: string) => void;
 }
@@ -25,6 +27,8 @@ export interface FullScan {
   root: string;
   framework: string;
   fileCount: number;
+  /** Paths left unscanned because the repository's own ignore rules exclude them. */
+  gitIgnoredCount: number;
   findings: Finding[];
   checks: CheckSummary[];
   warnings: string[];
@@ -37,7 +41,9 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
   const root = resolve(options.root);
   const roots = options.paths?.length ? options.paths.map((p) => resolve(root, p)) : [root];
 
-  const files = [...new Set(roots.flatMap((r) => walk(r)))];
+  const walked = roots.map((r) => walk(r, { respectGitignore: !options.noGitignore }));
+  const files = [...new Set(walked.flatMap((w) => w.files))];
+  const gitIgnoredCount = walked.reduce((n, w) => n + w.gitIgnored, 0);
   const framework = detectFramework(root, files);
 
   const ctx: ProjectContext = {
@@ -99,6 +105,17 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
     return (a.line ?? 0) - (b.line ?? 0);
   });
 
+  if (gitIgnoredCount > 0) {
+    checks.push({
+      label: `Ignored paths skipped (${gitIgnoredCount} ${gitIgnoredCount === 1 ? 'entry' : 'entries'})`,
+      passed: true,
+      note:
+        'excluded by your own .gitignore, and a skipped directory takes its whole ' +
+        'subtree with it. They are not part of the project and never reach a CI ' +
+        'checkout. Use --no-gitignore to scan them anyway.',
+    });
+  }
+
   const counts: Record<Severity, number> = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
   for (const f of filtered) counts[f.severity]++;
 
@@ -106,6 +123,7 @@ export async function scan(options: ScanOptions): Promise<FullScan> {
     root,
     framework: framework.describe(),
     fileCount: files.length,
+    gitIgnoredCount,
     findings: filtered,
     checks,
     warnings,

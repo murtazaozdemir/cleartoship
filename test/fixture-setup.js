@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 const VULNERABLE = join(here, 'fixtures', 'vulnerable-app');
 const CLEAN = join(here, 'fixtures', 'clean-app');
+const INDIRECT = join(here, 'fixtures', 'indirect-auth-app');
 
 /**
  * Fixture state that deliberately is NOT committed.
@@ -42,8 +43,16 @@ export function buildFixtures() {
     ].join('\n'),
   );
 
+  // The gitignore fixture needs a real, credential-shaped `.env` that its own
+  // .gitignore excludes — the case the scanner must still read, since a secret
+  // sitting in an ignored file is on your disk either way.
+  writeFileSync(
+    join(INDIRECT, '.env'),
+    ['STRIPE_SECRET_KEY=sk_live_51NqAbCdEfGhIjKlMnOpQrStU', ''].join('\n'),
+  );
+
   // A bare directory is enough: the scanner only checks that one exists.
-  for (const root of [VULNERABLE, CLEAN]) {
+  for (const root of [VULNERABLE, CLEAN, INDIRECT]) {
     mkdirSync(join(root, '.git'), { recursive: true });
   }
 }

@@ -1,5 +1,6 @@
 import { readdirSync, statSync, readFileSync, existsSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { Gitignore, extendedAt, repositoryExcludes } from './gitignore.js';
 
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '.next', '.turbo', '.vercel', '.wrangler',
@@ -56,11 +57,30 @@ function looksGenerated(fullPath: string, size: number): boolean {
   }
 }
 
-export function walk(root: string): string[] {
+export interface WalkResult {
+  files: string[];
+  /** How many paths were left out because the repository ignores them. */
+  gitIgnored: number;
+}
+
+/**
+ * Files a `.gitignore` excludes are still worth reading, because the tool
+ * reasons about them by name: a secret in an ignored `.env` is on your disk
+ * either way, and CTS032 exists to check that the file is ignored at all.
+ */
+const SCAN_EVEN_IF_IGNORED = /(^|\/)\.env(\.|$)/;
+
+export function walk(root: string, options: { respectGitignore?: boolean } = {}): WalkResult {
+  const respect = options.respectGitignore !== false;
   const found: string[] = [];
-  const stack = [root];
+  let gitIgnored = 0;
+  const rootRules = respect
+    ? extendedAt(repositoryExcludes(root, read), root, read)
+    : Gitignore.empty();
+  const stack: { dir: string; rules: Gitignore }[] = [{ dir: root, rules: rootRules }];
+
   while (stack.length) {
-    const dir = stack.pop()!;
+    const { dir, rules } = stack.pop()!;
     let entries: string[];
     try {
       entries = readdirSync(dir);
@@ -77,10 +97,20 @@ export function walk(root: string): string[] {
       }
       if (st.isDirectory()) {
         if (SKIP_DIRS.has(entry)) continue;
-        stack.push(full);
+        // git never descends into an ignored directory, and neither do we —
+        // which is also where most of the saving comes from.
+        if (respect && rules.ignores(full, true)) {
+          gitIgnored++;
+          continue;
+        }
+        stack.push({ dir: full, rules: respect ? extendedAt(rules, full, read) : rules });
         continue;
       }
       if (!st.isFile() || st.size > MAX_FILE_BYTES) continue;
+      if (respect && !SCAN_EVEN_IF_IGNORED.test(full) && rules.ignores(full, false)) {
+        gitIgnored++;
+        continue;
+      }
       const dot = entry.lastIndexOf('.');
       const ext = dot === -1 ? '' : entry.slice(dot);
       // .env, .env.local, requirements.txt and friends have no useful extension.
@@ -96,7 +126,7 @@ export function walk(root: string): string[] {
       }
     }
   }
-  return found.sort();
+  return { files: found.sort(), gitIgnored };
 }
 
 export function read(file: string): string | null {

@@ -153,6 +153,7 @@ npx cleartoship --sarif -o results.sarif # GitHub code scanning
 npx cleartoship --fail-on high           # stricter CI gate (default: critical)
 npx cleartoship --ignore CTS004,CTS022   # skip rules
 npx cleartoship --no-community           # ClearToShip rules only
+npx cleartoship --no-gitignore           # also scan what .gitignore excludes
 npx cleartoship --markdown               # markdown report (PR comments / summaries)
 ```
 
@@ -276,6 +277,15 @@ uploaded, and no database is connected to.
   commented-out line are reported at `low`, never as blocking criticals.
 - **Precision over recall on the noisy rules.** Typosquat matching skips exact matches and
   names shorter than five characters, where one-edit neighbours are meaningless.
+- **Your `.gitignore` decides what counts as your project.** Ignored paths are
+  not scanned: they never reach a CI checkout, so a finding there is one nobody
+  can act on and nobody's pipeline would reproduce. This is usually the
+  difference between a usable report and an unreadable one — a repo with a
+  gitignored folder of reference apps went from 1,487 findings to 235, and from
+  84 seconds to 2. `.env` files are the deliberate exception, since a secret on
+  your disk is a secret either way and CTS032 exists to check that the file *is*
+  ignored. `--no-gitignore` scans everything, and the report always says how many
+  paths were skipped.
 - **Auth is followed into the helper it lives in.** Almost no real app repeats the
   session check inside every action — it resolves in `lib/auth.ts`, or in a
   framework helper such as Shopify's `handleSessionToken`, and each action calls

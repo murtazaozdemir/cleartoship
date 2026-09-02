@@ -1,0 +1,5 @@
+# Reference copies of other people's apps, kept locally, never committed.
+vendored/
+*.local.json
+.env
+!.env.example
