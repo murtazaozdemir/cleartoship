@@ -20,8 +20,8 @@ jobs:
   preflight:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
 
@@ -29,7 +29,7 @@ jobs:
       # the gate is the second run, so a finding is visible in the UI even when
       # it blocks the build.
       - run: npx cleartoship --sarif -o cleartoship.sarif --fail-on=none
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: cleartoship.sarif
 
