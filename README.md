@@ -21,7 +21,7 @@ npx cleartoship
 | Rule | Severity | What it catches |
 | --- | --- | --- |
 | **CTS001** | critical | Server Action / Route Handler mutates the database with no session check |
-| **CTS002** | high | Action takes caller input and writes it with no runtime schema validation |
+| **CTS002** | high | Caller's payload written to the database as an object — every key they sent becomes a column |
 | **CTS003** | critical | `SUPABASE_SERVICE_ROLE_KEY` client built inside a user-reachable action |
 | **CTS004** | medium | Authenticated mutation keyed only on a caller-supplied id (IDOR) |
 | **CTS040** | high | Client component reads a server-side `process.env` variable |
@@ -275,6 +275,12 @@ uploaded, and no database is connected to.
   a network blip must never be reported as a hallucinated dependency.
 - **Test fixtures are not breaches.** Credentials under `tests/`, `fixtures/`, `docs/` or in a
   commented-out line are reported at `low`, never as blocking criticals.
+- **Mass assignment means the payload arrives whole.** CTS002 and CTS043 fire when
+  the object the caller sent reaches the columns — `update(body)`,
+  `data: { ...input }`, including one level down where Prisma and Drizzle put it.
+  Reading named fields into an explicit column list is the safe pattern and is
+  never reported, whether or not a schema library was involved: of 102 findings
+  the old, broader rule produced on one dogfooded app, all 102 were that shape.
 - **Precision over recall on the noisy rules.** Typosquat matching skips exact matches and
   names shorter than five characters, where one-edit neighbours are meaningless.
 - **Your `.gitignore` decides what counts as your project.** Ignored paths are

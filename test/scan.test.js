@@ -137,6 +137,30 @@ test('lockfile entries are judged as lockfile entries', async () => {
   }
 });
 
+test('mass assignment is the payload arriving whole, not any write of caller input', async () => {
+  const bad = await scan({ root: VULNERABLE, offline: true });
+  const flagged = bad.findings.filter((f) => f.file === 'app/actions/mass-assign.ts');
+
+  // `.update(body)` — the payload passed straight in.
+  assert.ok(
+    flagged.some((f) => f.id === 'CTS002' && f.line === 10),
+    'a payload written whole is CTS002',
+  );
+  // `{ where: {...}, data: { ...input } }` — the same bug one level down, where
+  // a top-level scan of the call arguments never looked.
+  assert.ok(
+    flagged.some((f) => f.id === 'CTS043' && f.line === 18),
+    'a nested spread of the payload is CTS043',
+  );
+
+  const clean = await scan({ root: CLEAN, offline: true });
+  assert.deepEqual(
+    clean.findings.map((f) => `${f.id} ${f.file}:${f.line}`),
+    [],
+    'reading named fields into an explicit column list is the safe pattern, spread or not',
+  );
+});
+
 test('what git ignores is not part of the project', async () => {
   const result = await scan({ root: INDIRECT, offline: true });
   const files = result.findings.map((f) => f.file);

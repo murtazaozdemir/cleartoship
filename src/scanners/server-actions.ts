@@ -197,6 +197,8 @@ interface ActionInfo {
   workCalls: number;
   /** Reads caller-supplied input: a request body, query string or route param. */
   readsRequestInput: boolean;
+  /** Line where the caller's payload object is written whole, not field by field. */
+  wholePayloadLine: number | null;
 }
 
 function analyseFunction(
@@ -228,11 +230,65 @@ function analyseFunction(
     // A Server Action's arguments *are* its input; a Route Handler has to go
     // and read one, so that is detected below.
     readsRequestInput: false,
+    wholePayloadLine: null,
   };
 
   // An id the caller passed in is not proof of ownership — it is the IDOR.
   // Only a principal resolved inside the function counts as scoping.
   const params = parameterNames(node.params ?? []);
+
+  /**
+   * Names holding the caller's payload as one object: a Server Action's own
+   * parameter, or a variable assigned from a request-body read. Writing one of
+   * these whole is mass assignment; pulling named fields out of it and writing
+   * those is the safe pattern this rule used to report anyway.
+   */
+  const payloads = new Set<string>();
+  for (const p of node.params ?? []) {
+    // Only whole-object parameters. `({ name, role })` is already field by field.
+    if (p?.type === 'Identifier' && !/^(req|request|_req|_request|nextRequest)$/i.test(p.name)) {
+      payloads.add(p.name);
+    }
+  }
+  path.traverse({
+    VariableDeclarator(inner: any) {
+      const id = inner.node.id;
+      if (id?.type !== 'Identifier') return; // destructuring is field by field
+      let init = inner.node.init;
+      while (init && (init.type === 'AwaitExpression' || init.type === 'TSNonNullExpression')) {
+        init = init.argument ?? init.expression;
+      }
+      if (!init) return;
+      if (init.type === 'CallExpression' || init.type === 'OptionalCallExpression') {
+        const callee = calleeName(init.callee);
+        // `await request.json()`, and `JSON.parse(raw)` over one of these.
+        if (REQUEST_INPUT_READ.test(callee)) {
+          payloads.add(id.name);
+          return;
+        }
+        // `JSON.parse(raw)` and `Schema.parse(body)` both hand back the
+        // caller's object with its key set intact — a passthrough schema
+        // validates the fields it declares and keeps the rest (CTS044).
+        // A local helper that reads named fields into a literal is NOT this:
+        // its key set is fixed, which is exactly why it is safe to spread.
+        if (
+          /(^|\.)JSON\.parse$/.test(callee) ||
+          PAYLOAD_PRESERVING_CALLS.has(calleeTail(init.callee))
+        ) {
+          for (const arg of init.arguments ?? []) {
+            const root = arg?.type === 'Identifier' ? arg.name : rootObject(arg);
+            if (root && payloads.has(root)) {
+              payloads.add(id.name);
+              break;
+            }
+          }
+        }
+        return;
+      }
+      // A plain alias: `const input = raw`.
+      if (init.type === 'Identifier' && payloads.has(init.name)) payloads.add(id.name);
+    },
+  });
   // `export async function GET(_req, { params })` — the segment values are
   // caller-supplied input just as much as a body is.
   if (params.has('params')) info.readsRequestInput = true;
@@ -268,17 +324,35 @@ function analyseFunction(
       if (info.mutationLine === null) {
         info.mutationLine = inner.node.loc?.start.line ?? info.line;
       }
-      // `.update({ ...body })` writes whatever keys the caller chose to send.
-      for (const arg of inner.node.arguments ?? []) {
-        const props = arg?.type === 'ObjectExpression' ? arg.properties : null;
-        if (!props) continue;
-        for (const prop of props) {
-          if (prop?.type !== 'SpreadElement') continue;
-          const spreadOf = calleeName(prop.argument);
-          if (/^(this|process|env)\b/.test(spreadOf)) continue;
-          info.spreadLine ??= prop.loc?.start.line ?? info.line;
+      // What actually reaches the columns: `.update({ ...body })`,
+      // `.insert(body)`, `prisma.x.update({ data: { ...body } })` — the last of
+      // which hides one level down, where a top-level scan never saw it.
+      const inspectWritten = (arg: any, depth: number): void => {
+        if (!arg || depth > 2) return;
+        if (arg.type === 'Identifier') {
+          if (payloads.has(arg.name)) {
+            info.wholePayloadLine ??= arg.loc?.start.line ?? info.line;
+          }
+          return;
         }
-      }
+        if (arg.type !== 'ObjectExpression') return;
+        for (const prop of arg.properties ?? []) {
+          if (prop?.type === 'SpreadElement') {
+            // Only the caller's own object counts. Spreading a locally built
+            // literal — `...(x && { k: v })`, or an object a helper assembled
+            // from named fields — writes a key set this code chose, which is
+            // the safe pattern rather than the bug.
+            const root = rootObject(prop.argument);
+            if (!root || !payloads.has(root)) continue;
+            info.spreadLine ??= prop.loc?.start.line ?? info.line;
+            continue;
+          }
+          if (prop?.type !== 'ObjectProperty') continue;
+          if (!WRITE_PAYLOAD_KEYS.has(propertyKey(prop))) continue;
+          inspectWritten(prop.value, depth + 1);
+        }
+      };
+      for (const arg of inner.node.arguments ?? []) inspectWritten(arg, 0);
     }
     if (tail === 'from' || tail === 'select' || tail === 'findMany' || tail === 'findUnique' || tail === 'findFirst') {
       info.hasRead = true;
@@ -372,6 +446,27 @@ function analyseFunction(
   }
 
   return info;
+}
+
+/**
+ * Keys that hold the columns being written, one level inside the call argument.
+ * `prisma.user.update({ where, data: { ... } })`, `db.insert(t).values({ ... })`.
+ */
+const WRITE_PAYLOAD_KEYS = new Set(['data', 'values', 'set', 'create', 'update', 'insert', 'doc']);
+
+/**
+ * Calls that return the caller's object with its keys intact. A schema `.parse`
+ * belongs here because a passthrough schema — the CTS044 case — validates what
+ * it declares and hands back everything else untouched.
+ */
+const PAYLOAD_PRESERVING_CALLS = new Set([
+  'parse', 'parseAsync', 'safeParse', 'safeParseAsync', 'validate', 'validateSync', 'cast',
+]);
+
+function propertyKey(prop: any): string {
+  const key = prop?.key;
+  if (!key) return '';
+  return key.type === 'Identifier' ? key.name : key.type === 'StringLiteral' ? key.value : '';
 }
 
 const HTTP_MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -497,25 +592,30 @@ export const serverActionsScanner: Scanner = {
           });
         }
 
-        // A Route Handler that never reads a body, query or route param has no
-        // caller input to validate — reporting one is noise, and it was firing
-        // on cron endpoints whose whole body is a secret comparison.
-        const hasInput = !isRoute || info.readsRequestInput;
-        if (info.params > 0 && writes && hasInput && !info.hasValidation) {
+        // Narrowed deliberately. The old condition — parameters, a write, no
+        // `.parse()` — reported the ordinary safe pattern: pull named fields out
+        // of the payload, write an explicit column list. 92 of 92 hits on one
+        // dogfooded app were that shape. What actually carries the danger is the
+        // payload reaching the columns *as an object*, which is the only case
+        // where a field the caller invented can land in the row. A spread is
+        // that same danger and CTS043 already names it, so it is left to CTS043.
+        const massAssignable = info.wholePayloadLine !== null && info.spreadLine === null;
+        if (info.params > 0 && writes && massAssignable && !info.hasValidation) {
           push({
             id: 'CTS002',
             severity: 'high',
-            title: `${kind} input is never validated at runtime`,
+            title: `${kind} writes caller-supplied data without validating it`,
             detail:
-              `\`${name}\` accepts caller-supplied arguments and writes them to the database ` +
-              'without runtime schema validation. TypeScript types are erased at runtime, so a ' +
-              'crafted payload can carry extra fields straight into the write (mass assignment).',
+              `\`${name}\` passes an object it received straight into a database write, with no ` +
+              'runtime schema validation. TypeScript types are erased at runtime, so every key the ' +
+              'caller chose to send is written — adding `"is_admin": true` to the payload is enough ' +
+              'to set that column (mass assignment).',
             fix:
               'Parse the input before use:\n' +
               "  const parsed = MySchema.safeParse(raw)\n" +
               "  if (!parsed.success) throw new Error('Invalid input')\n" +
               'and pass `parsed.data` — never the raw argument — to the query.',
-            line: info.line,
+            line: info.wholePayloadLine ?? info.line,
             cwe: 'CWE-20: Improper Input Validation',
             owasp: 'A05:2025 - Injection',
             meta: { action: name, kind },
