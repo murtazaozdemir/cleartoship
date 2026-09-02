@@ -62,9 +62,12 @@ jobs:
           fi
           echo "npm authenticated as: ${who}"
 
-      - name: Publish to npm, with provenance
+      - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Provenance is gated on this, not on a hand-edited flag, so it turns
+          # itself on the day the repository goes public.
+          REPO_IS_PRIVATE: ${{ github.event.repository.private }}
         run: |
           ver=$(node -p "require('./package.json').version")
           published() { [ "$(npm view "cleartoship@${ver}" version 2>/dev/null)" = "$ver" ]; }
@@ -74,26 +77,34 @@ jobs:
             exit 0
           fi
 
-          # Provenance ties this tarball to this workflow run and this commit
-          # through Sigstore, and npm shows the result on the package page.
-          # npm checks exactly two prerequisites (libnpmpublish's
-          # ensureProvenanceGeneration): an OIDC token, which `id-token: write`
-          # above provides, and that the *package* is public. The source
-          # repository's visibility is never checked — so this works while the
-          # repo is private; the attestation simply names a commit an outsider
-          # cannot fetch yet, and becomes fully verifiable the day it can.
-          if npm publish --provenance --access public; then
-            exit 0
+          # Provenance ties the tarball to this workflow run and this commit
+          # through Sigstore. The npm CLI's own prerequisites are only an OIDC
+          # token and a public *package* — but the registry adds one the CLI
+          # does not, and 0.9.0 proved it the expensive way:
+          #
+          #   npm error 422 ... Error verifying sigstore provenance bundle:
+          #   Unsupported GitHub Actions source repository visibility: "private".
+          #   Only public source repositories are supported when publishing with
+          #   provenance.
+          #
+          # Worse, the CLI signs and writes the attestation to the *public*
+          # Sigstore transparency log before the registry rejects it, so an
+          # optimistic attempt leaks this repo's name and commit SHA on every
+          # release for nothing. Hence: ask first, attempt never.
+          if [ "$REPO_IS_PRIVATE" = "false" ]; then
+            echo "Repository is public — publishing with provenance."
+            if npm publish --provenance --access public; then
+              exit 0
+            fi
+            if published; then
+              echo "::warning::publish exited non-zero yet the registry serves ${ver}; not retrying"
+              exit 0
+            fi
+            echo "::warning::Publishing with provenance failed. Retrying without it so the release still ships — read the error above and fix it before the next release."
+          else
+            echo "::notice::Repository is private, so npm would reject a provenance-signed publish. Publishing unsigned; this becomes signed automatically once the repo is public."
           fi
 
-          # A publish either lands whole or not at all, but check before
-          # retrying rather than assume it.
-          if published; then
-            echo "::warning::publish exited non-zero yet the registry serves ${ver}; not retrying"
-            exit 0
-          fi
-
-          echo "::warning::Publishing with provenance failed. Retrying without it so the release still ships — read the error above and fix it before the next release."
           npm publish --access public
 
       - name: Verify the registry actually serves it
