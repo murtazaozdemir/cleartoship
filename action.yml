@@ -29,7 +29,7 @@ inputs:
   version:
     description: >-
       Version of the cleartoship npm package to run. Defaults to the version this
-      action's own ref declares, so `uses: …@v0.13.0` runs cleartoship@0.13.0. Set
+      action's own ref declares, so `uses: …@v0.13.1` runs cleartoship@0.13.1. Set
       `latest` to always track the newest release, or `local` to build from the checkout.
     required: false
     default: ''
@@ -76,7 +76,7 @@ runs:
       run: |
         # With no version pinned, run the exact version this action's checkout
         # declares. That keeps the action ref and the scanner in lockstep:
-        # `uses: <owner>/cleartoship@v0.13.0` runs cleartoship@0.13.0 instead of
+        # `uses: <owner>/cleartoship@v0.13.1` runs cleartoship@0.13.1 instead of
         # whatever npm happens to tag `latest` at the time.
         ver="$INPUT_VERSION"
         if [ -z "$ver" ]; then

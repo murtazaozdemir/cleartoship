@@ -3,15 +3,14 @@
 Public backlog. Working notes, positioning and anything about other projects
 live in `NOTES.private.md`, which is gitignored and stays on my machine.
 
-_Current release: **v0.13.0** (npm `latest`, published 2026-09-02)._
+_Current release: **v0.13.1** (npm `latest`)._
 _v0.13.0 and earlier published **unsigned** — npm's registry refuses provenance
-from a private source repo. `release.yml` reads the repository's visibility and
-turns signing on by itself, so the next release after going public is signed
-with no edit needed._
+from a private source repo. The repository is public now, and `release.yml`
+reads its visibility, so 0.13.1 is the first release signed with provenance._
 
 ## Where this stands
 
-Nine releases, 0.8.0 → 0.13.0. The calibration work is the point of the project
+Ten releases, 0.8.0 → 0.13.1. The calibration work is the point of the project
 so far: across a five-repo corpus the tool went from 2,290 findings to a few
 hundred, and from 157 criticals to a handful — **every removal verified by
 reading the code it was about**, never by adjusting a threshold. Reports that
