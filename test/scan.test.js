@@ -283,6 +283,40 @@ test('the LLM rules fire on the shape they name, and not on the safe one', async
   assert.deepEqual(clean.findings.map((f) => `${f.id} ${f.file}`), []);
 });
 
+test('scanning a repo by absolute path reports paths relative to that repo', () => {
+  // Found by scanning somebody else's repository rather than my own: `root` was
+  // always the shell's cwd, so `cleartoship /path/to/their/repo` reported every
+  // finding as `../../../private/tmp/.../app/page.tsx`. Accurate, unreadable,
+  // and impossible to match against a file in an editor.
+  const out = execFileSync(process.execPath, [CLI, VULNERABLE, '--offline', '--json', '--no-community', '--fail-on=none'], {
+    cwd: join(here, '..', 'src'),   // deliberately not inside the scanned tree
+    encoding: 'utf8',
+  });
+  const files = JSON.parse(out).findings.map((f) => f.file).filter(Boolean);
+  assert.ok(files.length > 0, 'the fixture should still produce findings');
+  const escaping = files.filter((f) => f.startsWith('..'));
+  assert.deepEqual(escaping, [], 'no finding may be reported with a path that climbs out of the repo');
+  assert.ok(
+    files.some((f) => f === 'app/actions/admin.ts'),
+    `expected a repo-relative path, got ${files.slice(0, 3).join(', ')}`,
+  );
+});
+
+test('a subdirectory argument still scans as part of the surrounding project', () => {
+  // The other half of the same decision: `cleartoship app` must NOT re-root at
+  // app/, because framework detection and .gitignore hang off the project's own
+  // package.json one level up.
+  const out = execFileSync(process.execPath, [CLI, 'app', '--offline', '--json', '--no-community', '--fail-on=none'], {
+    cwd: VULNERABLE,
+    encoding: 'utf8',
+  });
+  const files = JSON.parse(out).findings.map((f) => f.file).filter(Boolean);
+  assert.ok(
+    files.every((f) => f.startsWith('app/')),
+    'paths stay relative to the project root, not the subdirectory',
+  );
+});
+
 test('the agent rules fire on the shape they name, and stand down on the gated one', async () => {
   const bad = await scan({ root: VULNERABLE, offline: true });
   const only = (id) => bad.findings.filter((f) => f.id === id);

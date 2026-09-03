@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { Command, Option } from 'commander';
-import { writeFileSync, readFileSync } from 'node:fs';
+import { writeFileSync, readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, relative, isAbsolute } from 'node:path';
 import pc from 'picocolors';
 import { scan } from './scan.js';
 import { banner } from './banner.js';
@@ -23,6 +23,41 @@ try {
   version = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).version;
 } catch {
   /* running from an unusual layout; version is cosmetic */
+}
+
+/**
+ * Decide what the project root is, given the cwd and whatever paths were typed.
+ *
+ * `cleartoship /path/to/some/repo` means "scan that project". Rooting the scan
+ * at the shell's cwd instead reports every finding as
+ * `../../../tmp/x/app/page.tsx` — accurate, unreadable, and impossible to click
+ * in an editor.
+ *
+ * Only a lone directory argument that lies outside the cwd is promoted. Several
+ * paths, a file, or a path inside the current project all keep the cwd as root:
+ * `cleartoship app supabase` must not re-root at `app/`, because framework
+ * detection and `.gitignore` resolution both hang off the project's own
+ * `package.json`. An explicit `--cwd` always wins.
+ */
+export function resolveRoot(
+  cwd: string,
+  paths: string[],
+  cwdWasExplicit: boolean,
+): { root: string; paths: string[] } {
+  const only = paths.length === 1 ? paths[0] : undefined;
+  if (cwdWasExplicit || only === undefined) return { root: cwd, paths };
+
+  const candidate = resolve(cwd, only);
+  const inside = !relative(cwd, candidate).startsWith('..') && !isAbsolute(relative(cwd, candidate));
+  if (inside) return { root: cwd, paths };
+
+  try {
+    if (!statSync(candidate).isDirectory()) return { root: cwd, paths };
+  } catch {
+    // Unreadable or missing: leave it alone and let the scanner report it.
+    return { root: cwd, paths };
+  }
+  return { root: candidate, paths: [] };
 }
 
 const program = new Command();
@@ -74,9 +109,24 @@ program
     const list = (value?: string) =>
       value ? value.split(',').map((s) => s.trim()).filter(Boolean) : undefined;
 
+    // `cleartoship /path/to/some/repo` means "scan that project", not "scan that
+    // path as part of the one I happen to be standing in". Without this, every
+    // reported path is relative to the shell's cwd, so scanning a repo from
+    // anywhere else produces `../../../private/tmp/.../app/page.tsx` — accurate,
+    // unreadable, and impossible to match against a file in an editor.
+    //
+    // Only a single directory argument that sits outside the cwd is treated this
+    // way. `cleartoship app supabase` still scans subtrees of the current
+    // project, because rooting at `app/` would move the project root away from
+    // the `package.json` that framework detection and .gitignore depend on.
+    // `--cwd` carries a default, so it is always "set"; only the source says
+    // whether the user actually passed it.
+    const cwdWasExplicit = program.getOptionValueSource('cwd') === 'cli';
+    const { root, paths: scanPaths } = resolveRoot(opts.cwd, paths, cwdWasExplicit);
+
     const result = await scan({
-      root: opts.cwd,
-      paths,
+      root,
+      paths: scanPaths,
       offline: opts.offline,
       // commander maps --no-gitignore to `gitignore: false`.
       noGitignore: opts.gitignore === false,
