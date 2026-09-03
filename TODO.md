@@ -17,17 +17,27 @@ reading the code it was about**, never by adjusting a threshold. Reports that
 name a real problem are worth more than reports that cover a table.
 
 0.13.0 added the three agent rules (CTS083/084/085) and made the LLM/agent
-surface the headline rather than the fifth section.
+surface the headline rather than the fifth section. 0.13.1 was the first signed
+release. 0.13.2 raised the Node floor onto Babel 8.
 
 ## Open
 
 - [ ] **List the Action on the Marketplace.** `uses: murtazaozdemir/cleartoship@vX`
-      resolves now that the repository is public; the Marketplace listing itself
-      is a checkbox on a release and still needs doing. The `npx cleartoship` CI
-      recipe in the README works everywhere regardless.
-- [ ] **A user who is not me.** Every calibration decision so far has been made
-      against my own repositories. That is the biggest single weakness in the
-      tool's judgement, and no amount of further dogfooding fixes it.
+      resolves for anyone now, and `action.yml` already carries the branding a
+      listing requires. What is left cannot be scripted: there is no
+      `marketplace` field on the release object and `/marketplace_listing` is not
+      writable, because publishing means **accepting the GitHub Marketplace
+      Developer Agreement**. That is a legal acceptance, so it has to be done by
+      hand on the release page. The `npx cleartoship` recipe in the README works
+      everywhere regardless, and on any CI, not just GitHub.
+- [ ] **A user who is not me.** *The one that actually matters.* Every
+      calibration decision so far has been made against my own six repositories,
+      which is the biggest single weakness in the tool's judgement, and no amount
+      of further dogfooding fixes it — I would only be re-testing the same code
+      against the same assumptions. The cheapest way to fix it is to run the
+      scanner over somebody else's Next.js + Supabase + AI-agent codebase and
+      walk them through the report, in exchange for permission to fix whatever
+      comes back wrong. Five of those would teach more than the next five rules.
 - [ ] **Trademark "ClearToShip".** The code is MIT and the package is public, so
       the licence deliberately lets anyone copy, modify and sell it — that is the
       trade, and it is the same one gitleaks and GuardVibe made with this project.
@@ -43,6 +53,13 @@ surface the headline rather than the fifth section.
   Node 23 and 24.0–24.10 work, and Babel 8 does not support them. Node 18 and 20
   are dropped. CI tests the declared floor (`22.18.0`) alongside the latest 22
   and 24, so a claim the code cannot meet fails the build rather than a user's.
+  Worth being clear why the exactness matters here rather than being pedantry:
+  had the range been wrong, the tool would have installed happily and then failed
+  at *parse* time — and an unparsed file produces **no findings**, not an error.
+  A scanner's worst failure is reporting clean on code it never read.
+  ⚠️ **Local dev needs a newer Node than this machine's default.** `node` on the
+  PATH here is v22.14, below the floor. Homebrew's v26 satisfies it:
+  `export PATH="/usr/local/opt/node/bin:$PATH"` before `npm install` or `npm test`.
 
 ## Deliberately not covered, and why
 
