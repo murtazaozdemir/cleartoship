@@ -131,11 +131,12 @@ runtimes, React Native, Go and shell.
 
 27 upstream rules are **superseded** where ClearToShip's own AST check is more
 precise, 6 are **withheld** as measurably noisy, 10 React Native rules are
-**skipped as inapplicable** on a project that is not React Native, 11 carry a
+**skipped as inapplicable** on a project that is not React Native, 21 carry a
 **match guard** for a
 shape their regex cannot exclude (a `"link": true` lockfile entry has no
 integrity hash by design; `querySelectorAll` is not a SQL call; `eval()` inside
-a sentence about eval is prose), and 3 name-heuristic rules are
+a sentence about eval is prose; a bounded agent loop written with the AI SDK's
+current `stopWhen` is not an unbounded one), and 3 name-heuristic rules are
 **manifest-only** — they never run over a `package-lock.json`, where they matched
 ordinary transitive packages (`fast-glob`, `core-js`) and named nothing anyone
 could act on. Each list carries a reason per rule in
@@ -275,7 +276,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: murtazaozdemir/cleartoship@v0.13.3
+      - uses: murtazaozdemir/cleartoship@v0.13.4
         with:
           fail-on: critical
           comment: true
@@ -297,7 +298,7 @@ above `fail-on`) for use in later steps. The comment is *sticky* — re-runs edi
 the same comment instead of piling up.
 
 By default the action runs the scanner version its own ref declares, so
-`@v0.13.3` runs `cleartoship@0.13.3` and pinning the ref pins the behaviour. If
+`@v0.13.4` runs `cleartoship@0.13.4` and pinning the ref pins the behaviour. If
 that version is not on the registry, it builds from its own checkout instead, so
 `uses: …@ref` works against an unpublished commit.
 

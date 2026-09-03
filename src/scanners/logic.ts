@@ -38,9 +38,17 @@ const MODEL_CALLS = [
   'streamObject',
 ];
 
-/** Options that put a ceiling on what one call can spend. */
+/**
+ * Options that put a ceiling on what one call can spend.
+ *
+ * `stopWhen` is the AI SDK's current name for the agent step cap — it replaced
+ * `maxSteps`, and across a corpus of real agent apps it is now the *more* common
+ * of the two. Missing it meant reporting `stopWhen: stepCountIs(5)` as unbounded,
+ * which is a scanner crying wolf at correct code because it learned an API name
+ * that moved.
+ */
 const TOKEN_LIMITS =
-  /^(max_tokens|maxTokens|maxOutputTokens|max_output_tokens|max_completion_tokens|maxCompletionTokens|maxSteps|max_steps)$/;
+  /^(max_tokens|maxTokens|maxOutputTokens|max_output_tokens|max_completion_tokens|maxCompletionTokens|maxSteps|max_steps|stopWhen|stop_when|stopConditions)$/;
 
 /** Names that hold instructions to the model rather than a user's message. */
 const PROMPT_NAME = /^(system|systemPrompt|system_prompt|instructions|prompt|preamble|template)$/i;

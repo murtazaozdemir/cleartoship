@@ -196,6 +196,14 @@ function sqlGuard(match: string, source: string, index: number): boolean {
 }
 
 /**
+ * A ceiling on what one model call or agent loop may spend, in any of the names
+ * the SDKs actually use. `stopWhen` is the current Vercel AI SDK spelling of the
+ * step cap; `maxSteps` is its predecessor.
+ */
+const HAS_STEP_CAP =
+  /\b(stopWhen|stop_when|stopConditions|maxSteps|max_steps|max_iterations|maxIterations|maxTokens|max_tokens|maxOutputTokens|max_output_tokens)\b/;
+
+/**
  * Per-rule filters for a match shape the upstream regex cannot exclude on its
  * own. Given the matched text plus where it sat, so a guard can look around it.
  */
@@ -316,6 +324,20 @@ const MATCH_GUARDS: Record<
   // and `tokenCount === 3` read as secret comparisons. A timing attack needs the
   // *secret itself* on one side, so the identifier has to be one of those words,
   // not merely start with one.
+  // Both of these learned an API name that moved. The Vercel AI SDK replaced
+  // `maxSteps` with `stopWhen`, and across a corpus of real agent apps
+  // (vercel/ai-chatbot, assistant-ui, the MCP reference servers) `stopWhen` is
+  // now the *more* common of the two — 21 files to 14. VG1033 looks only for
+  // `maxSteps` / `max_iterations`, and VG999 does not count a step cap at all,
+  // so between them they report every correctly-bounded agent loop written
+  // against the current SDK. `stopWhen: stepCountIs(5)` is the fix these rules
+  // are asking for, and it was being reported as the bug.
+  //
+  // Read from the whole call, not just the matched head: the regexes stop at
+  // the opening brace, so the option that answers them sits past the match.
+  VG1033: (_match, source, index) => !HAS_STEP_CAP.test(source.slice(index, index + 1200)),
+  VG999: (_match, source, index) => !HAS_STEP_CAP.test(source.slice(index, index + 1200)),
+
   VG106: (match) => {
     const identifier = /^[A-Za-z_$][\w$]*/.exec(match)?.[0] ?? '';
     return /(secret|token|apikey|api_key|signature|hmac|hash|digest|webhook)$/i.test(identifier);
