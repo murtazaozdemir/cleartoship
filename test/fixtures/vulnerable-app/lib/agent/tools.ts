@@ -39,6 +39,16 @@ server.registerTool(
   },
 )
 
+// An in-memory collection is not a database. `clients.delete(id)` on a Set was
+// two false criticals in the MCP reference servers, because the root pattern
+// matched `client` as a prefix of `clients`. Must not be reported.
+const sessions = new Map<string, string>()
+export const forgetSession = tool({
+  description: 'Drop a cached session entry',
+  parameters: z.object({ sessionId: z.string() }),
+  execute: async ({ sessionId }) => sessions.delete(sessionId),
+})
+
 // A tool that only reads is not excessive agency, whatever the model does with it.
 export const listWorkspaces = tool({
   description: 'List the workspaces a user can see',

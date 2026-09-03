@@ -125,8 +125,12 @@ const TOOL_REGISTER = /^(registerTool|addTool|setRequestHandler|tool)$/;
  * to somebody, a shell command, a file removed.
  */
 const IRREVERSIBLE: [RegExp, string][] = [
+  // The root has to be the whole first segment, not a prefix of it. `[\w.]*`
+  // let `client` match `clients.delete(sessionId)` on an in-memory Set — found
+  // in the MCP reference servers, where it was two false criticals. Same trap
+  // for `models`, `tables`, `repos`.
   [
-    /^(db|prisma|supabase|sql|knex|drizzle|conn|pool|client|collection|table|model|repo|repository)[\w.]*\.(delete|deleteMany|deleteOne|destroy|drop|truncate)$/i,
+    /^(db|prisma|supabase|sql|knex|drizzle|conn|pool|client|collection|table|model|repo|repository)(\.[\w$]+)*\.(delete|deleteMany|deleteOne|destroy|drop|truncate)$/i,
     'deletes rows',
   ],
   [/(^|\.)\$(execute|query)Raw(Unsafe)?$/, 'executes raw SQL'],
@@ -138,8 +142,9 @@ const IRREVERSIBLE: [RegExp, string][] = [
     'runs a shell command',
   ],
   [/(refunds|charges|paymentIntents|transfers|payouts|invoices|subscriptions)\.(create|cancel|update|del)$/i, 'moves money'],
+  // Same segment rule. `ses` as a prefix would otherwise claim `sessions.send`.
   [
-    /(resend|sendgrid|nodemailer|transporter|mailer|postmark|ses|emails)[\w.]*\.(send|sendMail|sendEmail)$/i,
+    /(^|\.)(resend|sendgrid|nodemailer|transporter|mailer|postmark|ses|emails)(\.[\w$]+)*\.(send|sendMail|sendEmail)$/i,
     'sends email',
   ],
 ];

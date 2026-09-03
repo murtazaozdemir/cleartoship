@@ -3,14 +3,14 @@
 Public backlog. Working notes, positioning and anything about other projects
 live in `NOTES.private.md`, which is gitignored and stays on my machine.
 
-_Current release: **v0.13.2** (npm `latest`)._
+_Current release: **v0.13.3** (npm `latest`)._
 _v0.13.0 and earlier published **unsigned** — npm's registry refuses provenance
 from a private source repo. The repository is public now, and `release.yml`
 reads its visibility, so 0.13.1 is the first release signed with provenance._
 
 ## Where this stands
 
-Eleven releases, 0.8.0 → 0.13.2. The calibration work is the point of the project
+Twelve releases, 0.8.0 → 0.13.3. The calibration work is the point of the project
 so far: across a five-repo corpus the tool went from 2,290 findings to a few
 hundred, and from 157 criticals to a handful — **every removal verified by
 reading the code it was about**, never by adjusting a threshold. Reports that
@@ -19,6 +19,15 @@ name a real problem are worth more than reports that cover a table.
 0.13.0 added the three agent rules (CTS083/084/085) and made the LLM/agent
 surface the headline rather than the fifth section. 0.13.1 was the first signed
 release. 0.13.2 raised the Node floor onto Babel 8.
+
+**0.13.3 is the first release fixed by code I did not write.** Scanning
+vercel/ai-chatbot, modelcontextprotocol/servers and assistant-ui turned up two
+real defects in one afternoon that six repositories of my own never showed: paths
+were reported relative to the shell's cwd rather than the scanned repo, and
+CTS083 matched `clients.delete(id)` on an in-memory `Set` because the root
+pattern accepted a prefix instead of a whole segment. Both were exactly the kind
+of thing dogfooding structurally cannot find — my repos all sit beside this one,
+and I would never have written `clients` for a Set.
 
 ## Open
 

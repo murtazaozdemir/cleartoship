@@ -330,6 +330,13 @@ test('the agent rules fire on the shape they name, and stand down on the gated o
   // read-only tool never was.
   assert.ok(!agency.some((f) => f.meta.tool === 'archiveWorkspace'), 'a gated tool is not reported');
   assert.ok(!agency.some((f) => f.meta.tool === 'listWorkspaces'), 'a read-only tool is not reported');
+  // An in-memory Map/Set is not a database. Real-world regression: `client` in
+  // the root list matched `clients.delete(id)` on a Set in the MCP reference
+  // servers, because the pattern allowed a prefix rather than a whole segment.
+  assert.ok(
+    !agency.some((f) => f.meta.tool === 'forgetSession'),
+    'Map.delete() inside a tool is not an irreversible database write',
+  );
 
   // LLM10 — the point where the answer stops being text.
   const output = only('CTS084');
