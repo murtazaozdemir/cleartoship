@@ -30,7 +30,7 @@ const program = new Command();
 program
   .name('cleartoship')
   .description(
-    'Pre-flight security check for AI-built & vibe-coded apps.\n' +
+    'Pre-flight security check for AI-built apps, agents included.\n' +
       'Finds missing Server Action auth, Supabase RLS holes, hallucinated npm\n' +
       'packages and leaked keys before you deploy.',
   )

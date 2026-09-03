@@ -3,14 +3,14 @@
 Public backlog. Working notes, positioning and anything about other projects
 live in `NOTES.private.md`, which is gitignored and stays on my machine.
 
-_Current release: **v0.13.1** (npm `latest`)._
+_Current release: **v0.13.2** (npm `latest`)._
 _v0.13.0 and earlier published **unsigned** — npm's registry refuses provenance
 from a private source repo. The repository is public now, and `release.yml`
 reads its visibility, so 0.13.1 is the first release signed with provenance._
 
 ## Where this stands
 
-Ten releases, 0.8.0 → 0.13.1. The calibration work is the point of the project
+Eleven releases, 0.8.0 → 0.13.2. The calibration work is the point of the project
 so far: across a five-repo corpus the tool went from 2,290 findings to a few
 hundred, and from 157 criticals to a handful — **every removal verified by
 reading the code it was about**, never by adjusting a threshold. Reports that
@@ -21,9 +21,6 @@ surface the headline rather than the fifth section.
 
 ## Open
 
-- [ ] **The Node floor.** Babel 8 + commander 15 need Node ^22.18. The code is
-      ready — 40/40 tests pass against Babel 8 — and the only open question is
-      which Node versions to drop.
 - [ ] **List the Action on the Marketplace.** `uses: murtazaozdemir/cleartoship@vX`
       resolves now that the repository is public; the Marketplace listing itself
       is a checkbox on a release and still needs doing. The `npx cleartoship` CI
@@ -38,6 +35,14 @@ surface the headline rather than the fifth section.
       here that actually works: a fork may take every line and still cannot call
       itself ClearToShip, which leaves the discoverability with the original.
       Worth filing sooner rather than later now that the repository is public.
+
+## Settled
+
+- **Node floor: `^22.18.0 || >=24.11.0`,** as of 0.13.2. That is Babel 8's own
+  range copied exactly rather than approximated — a looser `>=22.18` would claim
+  Node 23 and 24.0–24.10 work, and Babel 8 does not support them. Node 18 and 20
+  are dropped. CI tests the declared floor (`22.18.0`) alongside the latest 22
+  and 24, so a claim the code cannot meet fails the build rather than a user's.
 
 ## Deliberately not covered, and why
 

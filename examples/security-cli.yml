@@ -1,10 +1,8 @@
 # Copy to .github/workflows/security.yml in your own repository.
 #
-# The CLI path: nothing but npm is involved, so it works on any CI and from any
-# repository today. (The composite action in examples/security.yml is nicer —
-# sticky PR comments, typed outputs — but it lives in a repository that is
-# currently private, so `uses: murtazaozdemir/cleartoship@…` cannot resolve for
-# anyone else yet.)
+# The CLI path: nothing but npm is involved, so it works on any CI, not just
+# GitHub Actions. (The composite action in examples/security.yml is nicer on
+# GitHub — sticky PR comments, typed outputs.)
 name: ClearToShip
 
 on:
@@ -23,7 +21,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
 
       # Write the report for the Security tab, and don't fail on this step —
       # the gate is the second run, so a finding is visible in the UI even when

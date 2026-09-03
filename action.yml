@@ -29,7 +29,7 @@ inputs:
   version:
     description: >-
       Version of the cleartoship npm package to run. Defaults to the version this
-      action's own ref declares, so `uses: …@v0.13.1` runs cleartoship@0.13.1. Set
+      action's own ref declares, so `uses: …@v0.13.2` runs cleartoship@0.13.2. Set
       `latest` to always track the newest release, or `local` to build from the checkout.
     required: false
     default: ''
@@ -76,8 +76,10 @@ runs:
       run: |
         # With no version pinned, run the exact version this action's checkout
         # declares. That keeps the action ref and the scanner in lockstep:
-        # `uses: <owner>/cleartoship@v0.13.1` runs cleartoship@0.13.1 instead of
-        # whatever npm happens to tag `latest` at the time.
+        # pinning `uses: <owner>/cleartoship@vX.Y.Z` runs cleartoship@X.Y.Z
+        # instead of whatever npm happens to tag `latest` at the time. Written
+        # without a literal version on purpose: this line has twice been left
+        # stating the previous release during a bump.
         ver="$INPUT_VERSION"
         if [ -z "$ver" ]; then
           ver=$(node -p "require('${GITHUB_ACTION_PATH}/package.json').version")

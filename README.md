@@ -32,6 +32,10 @@ npx cleartoship
 **Free while in beta** — no account, no key, no tier. It runs on your machine and
 reports to your terminal.
 
+Requires **Node ^22.18 or >=24.11** — the range Babel 8 supports, mirrored exactly
+rather than approximated, since a looser `>=22.18` would claim Node 23 and early
+24 work when they do not.
+
 ## What it checks
 
 **Next.js server surface** — Server Actions, Route Handlers, client boundary
@@ -271,7 +275,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: murtazaozdemir/cleartoship@v0.13.1
+      - uses: murtazaozdemir/cleartoship@v0.13.2
         with:
           fail-on: critical
           comment: true
@@ -293,7 +297,7 @@ above `fail-on`) for use in later steps. The comment is *sticky* — re-runs edi
 the same comment instead of piling up.
 
 By default the action runs the scanner version its own ref declares, so
-`@v0.13.1` runs `cleartoship@0.13.1` and pinning the ref pins the behaviour. If
+`@v0.13.2` runs `cleartoship@0.13.2` and pinning the ref pins the behaviour. If
 that version is not on the registry, it builds from its own checkout instead, so
 `uses: …@ref` works against an unpublished commit.
 
