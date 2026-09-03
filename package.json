@@ -52,10 +52,10 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@babel/parser": "^7.25.0",
-    "@babel/traverse": "^7.25.0",
-    "@babel/types": "^7.25.0",
-    "commander": "^12.1.0",
+    "@babel/parser": "^8.0.4",
+    "@babel/traverse": "^8.0.4",
+    "@babel/types": "^8.0.4",
+    "commander": "^15.0.0",
     "picocolors": "^1.1.0"
   },
   "devDependencies": {
