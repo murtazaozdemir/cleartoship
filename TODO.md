@@ -38,13 +38,20 @@ release. 0.13.2 raised the Node floor onto Babel 8.
       scanner over somebody else's Next.js + Supabase + AI-agent codebase and
       walk them through the report, in exchange for permission to fix whatever
       comes back wrong. Five of those would teach more than the next five rules.
-- [ ] **Trademark "ClearToShip".** The code is MIT and the package is public, so
-      the licence deliberately lets anyone copy, modify and sell it — that is the
-      trade, and it is the same one gitleaks and GuardVibe made with this project.
-      What MIT does *not* grant is the name. A trademark is the only protection
-      here that actually works: a fork may take every line and still cannot call
-      itself ClearToShip, which leaves the discoverability with the original.
-      Worth filing sooner rather than later now that the repository is public.
+
+## Later — recorded, not being worked on
+
+- **Trademark "ClearToShip".** The code is MIT and the package is public, so the
+  licence deliberately lets anyone copy, modify and sell it — that is the trade,
+  and it is the same one gitleaks and GuardVibe made with this project. What MIT
+  does *not* grant is the name, and a trademark is the only protection here that
+  actually works: a fork may take every line and still cannot call itself
+  ClearToShip, which leaves the discoverability with the original.
+  **Parked deliberately, not forgotten.** At zero users there is nothing to pass
+  off and nobody to confuse, which is what a trademark protects against. The
+  moment to file is when the name starts carrying weight — real users, a
+  Marketplace listing, or the first time somebody else ships something built on
+  this. Revisit then rather than on a date.
 
 ## Settled
 
