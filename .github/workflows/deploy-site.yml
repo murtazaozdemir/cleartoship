@@ -1,0 +1,94 @@
+name: Deploy site
+
+# Ongoing deploys of the cleartoship.app landing page.
+#
+# This replaces Cloudflare's native Workers Builds git integration, which broke
+# when the repository was deleted and recreated: that integration is an OAuth
+# link to a repository *object*, so it does not survive one. This does — it is a
+# file in the repo plus two secrets, it is visible in the diff, and it can be
+# re-established from a clone.
+#
+# It does NOT perform the one-time custom-domain binding. That placeholder DNS
+# record has to be cleared once by hand in the Cloudflare dashboard (error
+# 100117). Once the domain is bound, every push touching site/ redeploys.
+on:
+  push:
+    branches: [main]
+    paths: ['site/**']
+  workflow_dispatch: {}
+
+# Two pushes in quick succession must not race to deploy the same Worker.
+concurrency:
+  group: deploy-site
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: site
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - run: npm ci
+
+      # Fail here, loudly, rather than at the deploy step with a wall of output.
+      # A token missing "Workers Scripts: Edit" is the likely cause.
+      - name: Check the Cloudflare token before deploying anything
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN or CLOUDFLARE_ACCOUNT_ID is not set on this repository."
+            exit 1
+          fi
+          npx wrangler whoami || {
+            echo "::error::The Cloudflare token was rejected. It needs Workers Scripts -> Edit on this account."
+            exit 1
+          }
+
+      - name: Record the live version before deploying
+        id: before
+        run: |
+          v=$(npx wrangler deployments list --name cleartoship 2>/dev/null \
+              | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+              | tail -1 || true)
+          echo "Live version before deploy: ${v:-none}"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: site
+          command: deploy
+
+      # A green push is not a deploy. Both aistoreaudit outages looked like a
+      # passing job: once GitHub billing killed the run before it started, once
+      # a missing token failed it in 8s, and both times production quietly served
+      # a stale build for days. So this does not merely print the version — it
+      # compares, and fails the job if the live Worker did not actually move.
+      - name: Confirm the live version actually changed
+        run: |
+          after=$(npx wrangler deployments list --name cleartoship 2>/dev/null \
+                  | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' \
+                  | tail -1 || true)
+          before="${{ steps.before.outputs.version }}"
+          echo "before: ${before:-none}"
+          echo "after:  ${after:-none}"
+          if [ -z "$after" ]; then
+            echo "::error::Could not read the live version back. Treating as a failed deploy."
+            exit 1
+          fi
+          if [ -n "$before" ] && [ "$before" = "$after" ]; then
+            echo "::error::The live Worker version did not change ($after). The job was green but nothing shipped."
+            exit 1
+          fi
+          echo "::notice::Landing page deployed. Live version is now $after."
