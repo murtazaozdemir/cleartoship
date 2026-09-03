@@ -31,6 +31,13 @@ surface the headline rather than the fifth section.
 - [ ] **A user who is not me.** Every calibration decision so far has been made
       against my own repositories. That is the biggest single weakness in the
       tool's judgement, and no amount of further dogfooding fixes it.
+- [ ] **Trademark "ClearToShip".** The code is MIT and the package is public, so
+      the licence deliberately lets anyone copy, modify and sell it — that is the
+      trade, and it is the same one gitleaks and GuardVibe made with this project.
+      What MIT does *not* grant is the name. A trademark is the only protection
+      here that actually works: a fork may take every line and still cannot call
+      itself ClearToShip, which leaves the discoverability with the original.
+      Worth filing sooner rather than later now that the repository is public.
 
 ## Deliberately not covered, and why
 
