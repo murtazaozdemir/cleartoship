@@ -37,7 +37,12 @@ const result = await build({
   metafile: true,
   // Bundled dependencies keep their licences with them; LICENSES/ and
   // ATTRIBUTION.md ship alongside, as they do in the npm package.
-  define: { 'process.env.CLEARTOSHIP_STANDALONE': '"1"' },
+  define: {
+    'process.env.CLEARTOSHIP_STANDALONE': '"1"',
+    // Stamped in because the raw single file has no package.json beside it to
+    // read a version from, and reporting 0.0.0 makes a report unciteable.
+    'process.env.CLEARTOSHIP_VERSION': JSON.stringify(pkg.version),
+  },
 });
 
 // The CLI reads its version from ../package.json relative to the entry file.
@@ -67,6 +72,13 @@ writeFileSync(
 for (const file of ['README.md', 'LICENSE', 'ATTRIBUTION.md', 'SECURITY.md']) {
   copyFileSync(join(root, file), join(out, file));
 }
+
+// The same file, at the top level, is the artifact for the install path that
+// involves no package manager at all: curl it and run it with node. npm 12
+// refuses remote-URL and git installs by default (allow-remote/allow-git are
+// "none"), so the tarball paths now need an explicit flag — this one does not
+// go near npm.
+copyFileSync(join(out, 'bin/cleartoship.mjs'), join(out, 'cleartoship.mjs'));
 
 const bytes = Object.values(result.metafile.outputs)[0].bytes;
 console.log(`standalone/bin/cleartoship.mjs  ${(bytes / 1024).toFixed(0)} KB, 0 dependencies`);

@@ -88,18 +88,25 @@ jobs:
           mv "standalone/${packed}" cleartoship-standalone.tgz
           ls -la "${tarball}" cleartoship-standalone.tgz
 
+          # And the bundle as a bare file. npm 12 ships with allow-remote and
+          # allow-git set to "none", so both tarball paths now need an explicit
+          # flag from the user; a file you curl and hand to node needs no
+          # package manager to cooperate at all.
+          cp standalone/cleartoship.mjs cleartoship.mjs
+
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
             gh release upload "${GITHUB_REF_NAME}" \
-              "${tarball}" cleartoship-standalone.tgz --clobber
+              "${tarball}" cleartoship-standalone.tgz cleartoship.mjs --clobber
             echo "::notice::Updated release ${GITHUB_REF_NAME}."
           else
             gh release create "${GITHUB_REF_NAME}" \
-              "${tarball}" cleartoship-standalone.tgz \
+              "${tarball}" cleartoship-standalone.tgz cleartoship.mjs \
               --generate-notes --title "${GITHUB_REF_NAME}"
             echo "::notice::Released ${GITHUB_REF_NAME}."
           fi
-          echo "Installable with no registry at all:"
-          echo "  npx https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/cleartoship-standalone.tgz"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download"
+          echo "Runs with no package manager involved:"
+          echo "  curl -fsSL ${base}/cleartoship.mjs -o cleartoship.mjs && node cleartoship.mjs"
 
       - name: Check the npm token before publishing
         env:

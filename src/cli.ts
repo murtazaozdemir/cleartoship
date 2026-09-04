@@ -18,11 +18,16 @@ import { SEVERITY_ORDER } from './types.js';
 import type { Severity } from './types.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-let version = '0.0.0';
-try {
-  version = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).version;
-} catch {
-  /* running from an unusual layout; version is cosmetic */
+// The standalone bundle is a single file with no sibling manifest to read, so
+// the build stamps the version in. Undefined in the normal build, which falls
+// through to the manifest exactly as before.
+let version = process.env.CLEARTOSHIP_VERSION ?? '0.0.0';
+if (version === '0.0.0') {
+  try {
+    version = JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8')).version;
+  } catch {
+    /* running from an unusual layout; version is cosmetic */
+  }
 }
 
 /**

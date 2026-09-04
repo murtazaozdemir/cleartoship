@@ -32,12 +32,18 @@ npx cleartoship
 **Free while in beta** — no account, no key, no tier. It runs on your machine and
 reports to your terminal.
 
-Or with nothing at all left to resolve — one bundled file, zero dependencies,
-no registry in the path:
+Or with no package manager in the path at all — one bundled file, zero
+dependencies, nothing for a registry to resolve:
 
 ```bash
-npx https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship-standalone.tgz
+curl -fsSL https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship.mjs -o cleartoship.mjs
+node cleartoship.mjs
 ```
+
+That second one is the most robust way to run this, and deliberately so: npm 12
+ships with `allow-remote` and `allow-git` set to `none`, so *any* install from a
+URL or a git ref now needs an explicit flag from the user. A file you fetch and
+hand to `node` needs nothing to cooperate.
 
 Requires **Node ^22.18 or >=24.11** — the range Babel 8 supports, mirrored exactly
 rather than approximated, since a looser `>=22.18` would claim Node 23 and early
@@ -49,21 +55,30 @@ rather than approximated, since a looser `>=22.18` would claim Node 23 and early
 `npx cleartoship` is the normal one. Two others exist so that a registry or
 account problem cannot take the tool offline — which is not hypothetical:
 
-```bash
-# straight from the repository — builds on install, no npm account involved
-npx github:murtazaozdemir/cleartoship
+Ranked by how little has to work for them to work:
 
-# the standalone build attached to every release: one file, zero dependencies,
-# nothing left for a registry to resolve
-npx https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship-standalone.tgz
+```bash
+# 1. nothing but node. No package manager, no registry, no install step.
+curl -fsSL https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship.mjs -o cleartoship.mjs
+node cleartoship.mjs
+
+# 2. the same bundle as an installable package. npm 12 defaults allow-remote to
+#    "none", so it has to be told this is wanted.
+npm i -D https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship-standalone.tgz --allow-remote=all
+
+# 3. from the repository, building on install. npm 12 defaults allow-git to
+#    "none" too, and the build is a lifecycle script, so both need allowing.
+npm i -D github:murtazaozdemir/cleartoship --allow-git=all --allow-scripts=cleartoship
+
+# 4. the registry
+npx cleartoship
 ```
 
-The first still resolves this tool's five runtime dependencies from npm; what it
-removes is any dependency on *this package* being published. The second removes
-the rest — it is bundled, so it installs and runs whether or not a registry
-answers at all. The test suite asserts the two produce identical findings on the
-same repository, because a fallback that behaves differently from the tool you
-tested is not a fallback.
+1 and 2 are the same bundled file, and the test suite asserts it produces
+identical findings to the published package — a fallback that behaves
+differently from the tool you tested is not a fallback. 3 still resolves the
+five runtime dependencies from npm; what it removes is any dependency on *this
+package* being published. Only 4 needs npmjs.com to be serving.
 
 The GitHub Action needs neither. `action.yml` falls back to building from its own
 checkout when the published version cannot be resolved, so
