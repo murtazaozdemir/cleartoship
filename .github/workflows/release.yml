@@ -71,26 +71,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Two artifacts, and they are not the same thing.
+          #
+          # cleartoship-X.Y.Z.tgz is the npm package: the module tree, five
+          # runtime dependencies, identical to what the registry serves.
+          #
+          # cleartoship-standalone.tgz is one bundled file with no dependencies
+          # at all, so it installs when the registry cannot resolve anything.
+          # Its name carries no version on purpose, which makes
+          # /releases/latest/download/cleartoship-standalone.tgz a permanent
+          # install URL and keeps a version literal out of the README — the one
+          # line that has repeatedly been left naming the previous release.
           tarball=$(npm pack --silent)
-          echo "packed ${tarball}"
-
-          # Attached twice, deliberately. The versioned name is the archive;
-          # `cleartoship.tgz` is a stable alias, so
-          # /releases/latest/download/cleartoship.tgz is a permanent install URL
-          # that never needs a version written into the README — the one place
-          # a literal version has repeatedly been left naming the last release.
-          cp "${tarball}" cleartoship.tgz
+          npm run bundle
+          packed=$(cd standalone && npm pack --silent)
+          mv "standalone/${packed}" cleartoship-standalone.tgz
+          ls -la "${tarball}" cleartoship-standalone.tgz
 
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" "${tarball}" cleartoship.tgz --clobber
-            echo "::notice::Updated release ${GITHUB_REF_NAME} with ${tarball}."
+            gh release upload "${GITHUB_REF_NAME}" \
+              "${tarball}" cleartoship-standalone.tgz --clobber
+            echo "::notice::Updated release ${GITHUB_REF_NAME}."
           else
-            gh release create "${GITHUB_REF_NAME}" "${tarball}" cleartoship.tgz \
+            gh release create "${GITHUB_REF_NAME}" \
+              "${tarball}" cleartoship-standalone.tgz \
               --generate-notes --title "${GITHUB_REF_NAME}"
-            echo "::notice::Released ${GITHUB_REF_NAME} with ${tarball} attached."
+            echo "::notice::Released ${GITHUB_REF_NAME}."
           fi
-          echo "Installable without npmjs.com:"
-          echo "  npx https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/cleartoship.tgz"
+          echo "Installable with no registry at all:"
+          echo "  npx https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/cleartoship-standalone.tgz"
 
       - name: Check the npm token before publishing
         env:

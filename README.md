@@ -46,16 +46,21 @@ account problem cannot take the tool offline:
 # straight from the repository — builds on install, no npm account involved
 npx github:murtazaozdemir/cleartoship
 
-# or the tarball attached to every release (permanent URL, always the latest)
-npx https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship.tgz
+# or the standalone build attached to every release: one file, zero
+# dependencies, nothing left for a registry to resolve
+npx https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship-standalone.tgz
 ```
+
+The first still resolves this tool's five runtime dependencies from npm; what it
+removes is any dependency on *this package* being published. The second removes
+the rest — it is bundled, so it installs and runs whether or not a registry
+answers at all. The test suite asserts the two produce identical findings on the
+same repository, because a fallback that behaves differently from the tool you
+tested is not a fallback.
 
 The GitHub Action needs neither. `action.yml` falls back to building from its own
 checkout when the published version cannot be resolved, so
 `uses: murtazaozdemir/cleartoship@vX.Y.Z` keeps working either way.
-
-Both still resolve this tool's five runtime dependencies from npm; what they
-remove is any dependency on **this package** being published.
 
 </details>
 

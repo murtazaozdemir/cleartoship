@@ -1233,3 +1233,34 @@ test('repository text going into a PR comment cannot close the block it sits in'
   assert.equal(md.match(/^```$/gm).length, 2, 'exactly one balanced fence');
   assert.ok(md.includes('&lt;'), 'the text is escaped rather than dropped, so it stays readable');
 });
+
+test('the zero-dependency bundle behaves exactly like the package it stands in for', async () => {
+  // The standalone artifact exists so a registry outage cannot take the tool
+  // offline. A fallback that behaves differently from the thing you tested is
+  // not a fallback, so this asserts they agree finding-for-finding rather than
+  // merely that the bundle starts. Built here rather than skipped when absent:
+  // a test that quietly skips is how the network-gated ones went unrun for
+  // months.
+  const { execFileSync } = await import('node:child_process');
+  const root = join(here, '..');
+  execFileSync(process.execPath, [join(root, 'scripts', 'bundle.mjs')], { stdio: 'pipe' });
+
+  const bundled = join(root, 'standalone', 'bin', 'cleartoship.mjs');
+  const args = [VULNERABLE, '--offline', '--json', '--fail-on=none'];
+  const run = (entry) =>
+    JSON.parse(execFileSync(process.execPath, [entry, ...args], { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }));
+
+  const normal = run(CLI);
+  const standalone = run(bundled);
+
+  const shape = (r) => r.findings.map((f) => `${f.id}|${f.severity}|${f.file}|${f.line}`).sort();
+  assert.ok(shape(normal).length > 30, 'the fixture should produce a substantial report');
+  assert.deepEqual(shape(standalone), shape(normal), 'every finding must match');
+  assert.equal(standalone.verdict, normal.verdict);
+  assert.equal(standalone.version, normal.version);
+
+  // The point of the artifact: nothing left to resolve.
+  const manifest = JSON.parse(readFileSync(join(root, 'standalone', 'package.json'), 'utf8'));
+  assert.deepEqual(manifest.dependencies, {}, 'the standalone package declares no dependencies');
+  assert.equal(manifest.version, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version);
+});
