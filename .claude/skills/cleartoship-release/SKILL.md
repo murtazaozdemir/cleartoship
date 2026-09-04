@@ -20,9 +20,14 @@ that was supposed to change. Not the exit code, not the checkmark — the artifa
 | Published to npm | `npm view cleartoship@<version> version` returns that version |
 | Deployed the landing page | `npx wrangler deployments list --name cleartoship` shows a *new* version id |
 | Cut a GitHub release | `gh release view v<version>` lists the expected assets, and one downloads and runs |
-| Deployed `aistoreaudit` | `npx wrangler deployments list` moved, or `https://aistoreaudit.com/api/debug` |
 
 If you cannot state which command you ran to confirm it, it is not confirmed.
+
+This table is for ClearToShip only. The sibling app `aistoreaudit` has the same
+rule and its own commands, and `/Users/Shared/CLAUDE.md` is where those live —
+read them there rather than copying them here. One operational fact in two
+places is how the stale one survives, which is the same failure this repo keeps
+fixing in its own docs.
 
 **Why.** On 2026-09-03 the `v0.13.4` release run reached `Check the npm token`,
 failed 401, and skipped publish, registry-verify and the GitHub Release. The job
