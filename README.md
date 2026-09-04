@@ -32,22 +32,29 @@ npx cleartoship
 **Free while in beta** — no account, no key, no tier. It runs on your machine and
 reports to your terminal.
 
+Or with nothing at all left to resolve — one bundled file, zero dependencies,
+no registry in the path:
+
+```bash
+npx https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship-standalone.tgz
+```
+
 Requires **Node ^22.18 or >=24.11** — the range Babel 8 supports, mirrored exactly
 rather than approximated, since a looser `>=22.18` would claim Node 23 and early
 24 work when they do not.
 
 <details>
-<summary>Installing without the npm registry</summary>
+<summary>Why there are three install paths</summary>
 
-`npx cleartoship` is the normal path. Two others exist so that a registry or
-account problem cannot take the tool offline:
+`npx cleartoship` is the normal one. Two others exist so that a registry or
+account problem cannot take the tool offline — which is not hypothetical:
 
 ```bash
 # straight from the repository — builds on install, no npm account involved
 npx github:murtazaozdemir/cleartoship
 
-# or the standalone build attached to every release: one file, zero
-# dependencies, nothing left for a registry to resolve
+# the standalone build attached to every release: one file, zero dependencies,
+# nothing left for a registry to resolve
 npx https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship-standalone.tgz
 ```
 

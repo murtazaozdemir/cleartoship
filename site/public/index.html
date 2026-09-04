@@ -87,6 +87,14 @@
   h1 .accent { color: var(--green); }
   .lede { font-size: clamp(17px, 2.1vw, 20px); color: var(--ink-dim); max-width: 620px; margin: 0 0 30px; }
   .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .alt-install {
+    margin: 14px 0 0; font-size: 13px; line-height: 1.7; color: var(--ink-faint);
+    max-width: 78ch;
+  }
+  .alt-install code {
+    display: inline-block; word-break: break-all; color: var(--ink-dim);
+    background: var(--bg-soft); border-radius: 4px; padding: 1px 6px;
+  }
   .cmd {
     display: inline-flex; align-items: center; gap: 12px;
     background: var(--panel); border: 1px solid var(--border);
@@ -227,8 +235,14 @@
           <span id="cmd">npx cleartoship</span>
           <button class="copy" onclick="copyCmd()">copy</button>
         </div>
+        <a href="https://github.com/murtazaozdemir/cleartoship/releases/latest" class="btn-ghost">Releases</a>
         <a href="https://www.npmjs.com/package/cleartoship" class="btn-ghost">View on npm</a>
       </div>
+
+      <p class="alt-install">
+        Or with no registry in the path at all — one bundled file, zero dependencies:
+        <code>npx https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship-standalone.tgz</code>
+      </p>
 
       <!-- terminal demo -->
       <div class="term" id="term">
