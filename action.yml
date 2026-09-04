@@ -45,9 +45,10 @@ inputs:
 outputs:
   resolved:
     description: >-
-      Which scanner actually ran — `published` (the npm package) or `local`
-      (built from this action's checkout because the version could not be
-      resolved). The action is designed to work either way; this says which.
+      Which scanner actually ran: `release` (the standalone bundle from the
+      GitHub release, no registry involved), `npm` (the published package), or
+      `checkout` (built from this action's own source). Tried in that order; the
+      action works either way, and this says which.
     value: ${{ steps.resolve.outputs.resolved }}
   verdict:
     description: One of clear, conditional, or hold.
@@ -92,23 +93,39 @@ runs:
           echo "No version pinned; matching this action's checkout: ${ver}"
         fi
 
-        # Prefer the published npm package. If it cannot be resolved — an
-        # unpublished version, or a pinned version that is not on the registry —
-        # fall back to building from this action's own checkout, so
-        # `uses: <owner>/cleartoship@ref` works with no npm dependency.
-        # `resolved` is reported so a caller can tell which of these two paths
-        # ran. Without it the fallback is invisible: the action works either
-        # way, which is the point, but a test asserting "the *published*
-        # package is fine" cannot tell that it silently graded a local build.
-        if [ "$ver" != "local" ] && npm view "cleartoship@${ver}" version >/dev/null 2>&1; then
-          echo "cmd=npx --yes cleartoship@${ver}" >> "$GITHUB_OUTPUT"
-          echo "resolved=published" >> "$GITHUB_OUTPUT"
-          echo "Using published cleartoship@${ver}"
-        else
-          echo "cleartoship@${ver} not on the registry; building from the action checkout."
+        # Order is deliberate, and npm is last on purpose. The release asset is a
+        # single bundled file with no dependencies, so it needs nothing but a
+        # download; npx and a checkout build both need the registry to answer, for
+        # this package or for the five it depends on. This project has been on the
+        # wrong side of that twice in one week - the package was unpublished out from
+        # under it, and npm 12 now refuses remote and git installs by default - so the
+        # Action does not lead with the link most likely to be missing.
+        #
+        # `resolved` is reported because otherwise the fallback is invisible: the
+        # Action works whichever path runs, which is the point, but a test claiming
+        # "the published package is fine" could not tell it had graded something else.
+        repo=$(node -p "require('${GITHUB_ACTION_PATH}/package.json').repository.url.replace(/^git\+/,'').replace(/\.git$/,'')")
+        asset="${repo}/releases/download/v${ver}/cleartoship.mjs"
+        bundle="${RUNNER_TEMP}/cleartoship-${ver}.mjs"
+
+        if [ "$ver" = "local" ]; then
+          echo "version: local - building from the action checkout."
           ( cd "$GITHUB_ACTION_PATH" && npm ci --silent && npm run build --silent )
           echo "cmd=node ${GITHUB_ACTION_PATH}/dist/cli.js" >> "$GITHUB_OUTPUT"
-          echo "resolved=local" >> "$GITHUB_OUTPUT"
+          echo "resolved=checkout" >> "$GITHUB_OUTPUT"
+        elif curl -fsSL --retry 2 "$asset" -o "$bundle" && node "$bundle" --version >/dev/null 2>&1; then
+          echo "cmd=node ${bundle}" >> "$GITHUB_OUTPUT"
+          echo "resolved=release" >> "$GITHUB_OUTPUT"
+          echo "Using the standalone bundle from release v${ver} - no registry involved."
+        elif npm view "cleartoship@${ver}" version >/dev/null 2>&1; then
+          echo "cmd=npx --yes cleartoship@${ver}" >> "$GITHUB_OUTPUT"
+          echo "resolved=npm" >> "$GITHUB_OUTPUT"
+          echo "No release asset for v${ver}; using the published npm package."
+        else
+          echo "Neither a release asset nor a published package for ${ver}; building from the checkout."
+          ( cd "$GITHUB_ACTION_PATH" && npm ci --silent && npm run build --silent )
+          echo "cmd=node ${GITHUB_ACTION_PATH}/dist/cli.js" >> "$GITHUB_OUTPUT"
+          echo "resolved=checkout" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Run ClearToShip

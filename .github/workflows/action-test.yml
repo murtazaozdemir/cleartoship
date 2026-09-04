@@ -70,19 +70,17 @@ jobs:
           offline: 'true'
           comment: 'true'
           version: latest
-      - name: Assert it actually ran the published package
+      - name: Assert the published package is installable at all
         run: |
-          # This job exists to prove the *published* package works. It could not:
-          # `version: latest` fails to resolve when nothing is published, the
-          # action falls back to building from the checkout, the clean verdict
-          # comes back, and the job goes green having tested the thing it was
-          # written to be a control for. The one canary for a broken publish was
-          # blind to a broken publish.
-          test "${{ steps.scan.outputs.resolved }}" = "published" || {
-            echo "::error::Resolved '${{ steps.scan.outputs.resolved }}', not 'published'."
-            echo "::error::cleartoship@latest is not on the registry, so this job graded a"
-            echo "::error::local build. That is a real problem — npx cleartoship is the"
-            echo "::error::install path in the README — not a reason to pass."
+          # Asked directly rather than through the action, because the action now
+          # prefers the release bundle and would no longer touch npm on a healthy
+          # run. This is the canary for `npx cleartoship`, which is a documented
+          # install path whether or not the action uses it — and which is exactly
+          # what was quietly broken while this job reported success.
+          npx --yes cleartoship@latest --version || {
+            echo "::error::npx cleartoship@latest does not run. The package is not"
+            echo "::error::installable from the registry, which breaks a documented"
+            echo "::error::install path even though the Action itself is unaffected."
             exit 1
           }
 

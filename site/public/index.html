@@ -7,7 +7,7 @@
 <title>ClearToShip — pre-flight security for AI-built apps</title>
 <meta name="description" content="The 30-second pre-launch security check for AI-built & vibe-coded apps. Catches missing Server Action auth, Supabase RLS holes, hallucinated npm packages and leaked keys before you deploy.">
 <meta property="og:title" content="ClearToShip">
-<meta property="og:description" content="Pre-flight security check for AI-built apps, agents included. Free while in beta. npx cleartoship.">
+<meta property="og:description" content="Pre-flight security check for AI-built apps, agents included. Free while in beta. One file, no dependencies, no registry required.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://cleartoship.app">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
@@ -96,10 +96,14 @@
     background: var(--bg-soft); border-radius: 4px; padding: 1px 6px;
   }
   .cmd {
-    display: inline-flex; align-items: center; gap: 12px;
+    display: block; position: relative; max-width: 100%;
     background: var(--panel); border: 1px solid var(--border);
-    border-radius: 10px; padding: 13px 16px; font-family: var(--mono); font-size: 15px;
+    border-radius: 10px; padding: 13px 16px; font-family: var(--mono);
+    font-size: 14px; line-height: 1.75;
   }
+  .cmd .line { display: flex; gap: 10px; padding-right: 54px; }
+  .cmd .cmdtext { word-break: break-all; }
+  .cmd .copy { position: absolute; top: 11px; right: 12px; }
   .cmd .prompt { color: var(--ink-faint); }
   .cmd .copy {
     cursor: pointer; border: 0; background: transparent; color: var(--ink-faint);
@@ -230,9 +234,9 @@
         the RLS policy left off, the npm package that doesn't exist.
       </p>
       <div class="cta-row">
-        <div class="cmd">
-          <span class="prompt">$</span>
-          <span id="cmd">npx cleartoship</span>
+        <div class="cmd" id="cmd">
+          <div class="line"><span class="prompt">$</span><span class="cmdtext">curl -fsSL https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship.mjs -o cleartoship.mjs</span></div>
+          <div class="line"><span class="prompt">$</span><span class="cmdtext">node cleartoship.mjs</span></div>
           <button class="copy" onclick="copyCmd()">copy</button>
         </div>
         <a href="https://github.com/murtazaozdemir/cleartoship/releases/latest" class="btn-ghost">Releases</a>
@@ -240,8 +244,9 @@
       </div>
 
       <p class="alt-install">
-        Or with no package manager at all — one bundled file, zero dependencies:
-        <code>curl -fsSL https://github.com/murtazaozdemir/cleartoship/releases/latest/download/cleartoship.mjs -o cleartoship.mjs &amp;&amp; node cleartoship.mjs</code>
+        One bundled file, zero dependencies, nothing for a registry to resolve.
+        From npm instead: <code>npx cleartoship</code> — which needs npmjs.com to be
+        serving, and npm 12 to allow it.
       </p>
 
       <!-- terminal demo -->
@@ -417,7 +422,13 @@
 
 <script>
   function copyCmd() {
-    navigator.clipboard && navigator.clipboard.writeText('npx cleartoship');
+    // Read the commands out of the DOM rather than repeating them here: this
+    // literal was left saying `npx cleartoship` after the block above changed,
+    // so the button copied something the page no longer showed.
+    var parts = [].map.call(document.querySelectorAll('#cmd .cmdtext'), function (n) {
+      return n.textContent.trim();
+    });
+    navigator.clipboard && navigator.clipboard.writeText(parts.join('\n'));
     var b = document.querySelector('.cmd .copy');
     if (b) { var t = b.textContent; b.textContent = 'copied'; setTimeout(function(){ b.textContent = t; }, 1200); }
   }
