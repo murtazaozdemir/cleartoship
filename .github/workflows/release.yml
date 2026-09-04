@@ -121,7 +121,12 @@ jobs:
           fi
           if ! who=$(npm whoami 2>&1); then
             echo "::error::NPM_TOKEN is not a valid npm token. npm whoami said: ${who}"
-            echo "::error::Generate a Classic -> Automation token at npmjs.com and re-set the secret."
+            echo "::error::Do NOT generate a Classic automation token — those are the"
+            echo "::error::2FA-bypass tokens npm restricted from account and package"
+            echo "::error::management in early August 2026, and will stop from publishing"
+            echo "::error::around January 2027. Use a Granular Access token scoped to this"
+            echo "::error::package, or better, migrate this workflow to trusted publishing"
+            echo "::error::(OIDC) — id-token: write is already granted above."
             exit 1
           fi
           echo "npm authenticated as: ${who}"
