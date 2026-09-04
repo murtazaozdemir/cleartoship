@@ -15,3 +15,6 @@ _reference/
 
 # Private working notes — never commit these (market position, other repos, account details).
 NOTES.private.md
+
+# `npm pack` output — the release workflow builds one as a Release asset.
+*.tgz

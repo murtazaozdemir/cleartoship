@@ -60,13 +60,14 @@ jobs:
           # line was twice left naming the previous release during a bump. Prose
           # cannot do that, so it is asserted instead.
           ver=$(node -p "require('./package.json').version")
-          fail=0
-          for f in examples/security.yml README.md; do
-            if grep -q 'cleartoship@v' "$f" && ! grep -qE "cleartoship@v${ver}([^0-9.]|$)" "$f"; then
-              echo "::error file=${f}::${f} does not pin v${ver}"
-              grep -n 'cleartoship@v' "$f"
-              fail=1
-            fi
-          done
-          test "$fail" = 0 || exit 1
-          echo "examples/security.yml and README.md pin v${ver}"
+          # Every version literal that names this package, wherever it appears:
+          # `uses: …@vX`, and any release-download URL.
+          bad=$(grep -ohE '(cleartoship@|cleartoship/releases/download/)v[0-9]+\.[0-9]+\.[0-9]+' \
+                  examples/security.yml README.md \
+                | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -u | grep -vx "v${ver}" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::docs name $(echo $bad) but package.json declares v${ver}"
+            grep -nE '(cleartoship@|cleartoship/releases/download/)v[0-9]' examples/security.yml README.md
+            exit 1
+          fi
+          echo "every version literal in the docs says v${ver}"

@@ -38,13 +38,13 @@ jobs:
           }
           # The shipped example pins a literal version, which is the line that
           # has twice been left naming the previous release during a bump.
-          for f in examples/security.yml README.md; do
-            grep -qE "cleartoship@v${pkg}([^0-9.]|$)" "$f" || {
-              echo "::error file=${f}::${f} does not pin v${pkg}"
-              grep -n 'cleartoship@v' "$f"
-              exit 1
-            }
-          done
+          bad=$(grep -ohE '(cleartoship@|cleartoship/releases/download/)v[0-9]+\.[0-9]+\.[0-9]+' \
+                  examples/security.yml README.md \
+                | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -u | grep -vx "v${pkg}" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::docs name $(echo $bad) but package.json declares v${pkg}"
+            exit 1
+          fi
           echo "releasing ${pkg}"
 
       - run: npm ci
@@ -58,7 +58,41 @@ jobs:
           action.yml package.json README.md SECURITY.md ATTRIBUTION.md TODO.md
           --fail-on=critical
 
-      - name: Check the npm token before building anything
+      # Ahead of the npm publish, deliberately. This step used to be last, so
+      # when the token check failed the GitHub Release was skipped with it —
+      # and the one distribution channel that does not depend on npm was left
+      # hostage to npm succeeding. v0.13.5 tagged, failed at the token, and
+      # left a bare tag with nothing anyone could download.
+      #
+      # Idempotent, because the whole point is that this tag gets re-run once
+      # the token is fixed: `gh release create` on an existing release is an
+      # error, so an existing one gets the asset re-uploaded instead.
+      - name: Create the GitHub Release and attach the tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tarball=$(npm pack --silent)
+          echo "packed ${tarball}"
+
+          # Attached twice, deliberately. The versioned name is the archive;
+          # `cleartoship.tgz` is a stable alias, so
+          # /releases/latest/download/cleartoship.tgz is a permanent install URL
+          # that never needs a version written into the README — the one place
+          # a literal version has repeatedly been left naming the last release.
+          cp "${tarball}" cleartoship.tgz
+
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "${tarball}" cleartoship.tgz --clobber
+            echo "::notice::Updated release ${GITHUB_REF_NAME} with ${tarball}."
+          else
+            gh release create "${GITHUB_REF_NAME}" "${tarball}" cleartoship.tgz \
+              --generate-notes --title "${GITHUB_REF_NAME}"
+            echo "::notice::Released ${GITHUB_REF_NAME} with ${tarball} attached."
+          fi
+          echo "Installable without npmjs.com:"
+          echo "  npx https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/cleartoship.tgz"
+
+      - name: Check the npm token before publishing
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -136,8 +170,3 @@ jobs:
           done
           echo "::error::cleartoship@${ver} never appeared on the registry"
           exit 1
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" --generate-notes --title "${GITHUB_REF_NAME}"
