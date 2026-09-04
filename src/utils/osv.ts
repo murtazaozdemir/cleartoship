@@ -24,21 +24,102 @@ export interface OsvVulnerability {
   aliases: string[];
   /** Highest CVSS base score found on the record, when it publishes one. */
   cvss: number | null;
+  /**
+   * The qualitative rating the database itself assigns (GitHub's
+   * `LOW`/`MODERATE`/`HIGH`/`CRITICAL`), for the records that carry no score
+   * this can compute.
+   */
+  rating: string | null;
   /** Lowest version that is not affected, when the record states one. */
   fixedIn: string | null;
 }
 
+const CVSS3_METRICS: Record<string, Record<string, number>> = {
+  AV: { N: 0.85, A: 0.62, L: 0.55, P: 0.2 },
+  AC: { L: 0.77, H: 0.44 },
+  UI: { N: 0.85, R: 0.62 },
+  C: { H: 0.56, L: 0.22, N: 0 },
+  I: { H: 0.56, L: 0.22, N: 0 },
+  A: { H: 0.56, L: 0.22, N: 0 },
+};
+const PR_UNCHANGED: Record<string, number> = { N: 0.85, L: 0.62, H: 0.27 };
+const PR_CHANGED: Record<string, number> = { N: 0.85, L: 0.68, H: 0.5 };
+
+/** The spec's own rounding: the smallest one-decimal number >= the input. */
+function roundUp1(value: number): number {
+  const scaled = Math.round(value * 100_000);
+  if (scaled % 10_000 === 0) return scaled / 100_000;
+  return (Math.floor(scaled / 10_000) + 1) / 10;
+}
+
+/**
+ * Base score for a CVSS v3.0/v3.1 vector string.
+ *
+ * OSV publishes `severity[].score` as the *vector* — `CVSS:3.1/AV:N/AC:L/...`
+ * — not as a number, and GitHub-sourced records carry no numeric score
+ * anywhere. Reading that field with `Number()` therefore produced `NaN` on
+ * essentially every advisory, every CVE fell through to the `null` default, and
+ * a 9.8 and a 5.3 were both reported as `high`. So the vector is computed,
+ * per the v3.1 specification, rather than hoped for.
+ *
+ * v2 and v4 vectors are left to the qualitative rating: v2 is long obsolete and
+ * v4's scoring is a lookup table, not a formula worth vendoring for a fallback.
+ */
+export function cvssFromVector(vector: string): number | null {
+  if (!/^CVSS:3\.[01]\//.test(vector)) return null;
+  const parts = new Map<string, string>();
+  for (const pair of vector.split('/').slice(1)) {
+    const [key, value] = pair.split(':');
+    if (key && value) parts.set(key, value);
+  }
+
+  const scopeChanged = parts.get('S') === 'C';
+  const pr = (scopeChanged ? PR_CHANGED : PR_UNCHANGED)[parts.get('PR') ?? ''];
+  const av = CVSS3_METRICS.AV![parts.get('AV') ?? ''];
+  const ac = CVSS3_METRICS.AC![parts.get('AC') ?? ''];
+  const ui = CVSS3_METRICS.UI![parts.get('UI') ?? ''];
+  const c = CVSS3_METRICS.C![parts.get('C') ?? ''];
+  const i = CVSS3_METRICS.I![parts.get('I') ?? ''];
+  const a = CVSS3_METRICS.A![parts.get('A') ?? ''];
+  if ([pr, av, ac, ui, c, i, a].some((v) => v === undefined)) return null;
+
+  const iss = 1 - (1 - c!) * (1 - i!) * (1 - a!);
+  const impact = scopeChanged
+    ? 7.52 * (iss - 0.029) - 3.25 * Math.pow(iss - 0.02, 15)
+    : 6.42 * iss;
+  if (impact <= 0) return 0;
+
+  const exploitability = 8.22 * av! * ac! * pr! * ui!;
+  const base = scopeChanged
+    ? Math.min(1.08 * (impact + exploitability), 10)
+    : Math.min(impact + exploitability, 10);
+  return roundUp1(base);
+}
+
 function highestCvss(vuln: any): number | null {
   let best: number | null = null;
+  const consider = (value: number | null) => {
+    if (value === null || !Number.isFinite(value)) return;
+    best = best === null ? value : Math.max(best, value);
+  };
   for (const s of vuln?.severity ?? []) {
-    // CVSS vectors are published as strings; the numeric score lives in
-    // database_specific or has to be derived. Prefer an explicit score.
-    const score = Number(s?.score);
-    if (Number.isFinite(score)) best = best === null ? score : Math.max(best, score);
+    const raw = s?.score;
+    // Some databases publish a bare number here; OSV's own records publish the
+    // vector. Accept either rather than assuming which one arrived.
+    if (typeof raw === 'number') consider(raw);
+    else if (typeof raw === 'string') {
+      const asNumber = Number(raw);
+      consider(Number.isFinite(asNumber) ? asNumber : cvssFromVector(raw));
+    }
   }
-  const explicit = Number(vuln?.database_specific?.cvss?.score);
-  if (Number.isFinite(explicit)) best = best === null ? explicit : Math.max(best, explicit);
+  consider(Number(vuln?.database_specific?.cvss?.score));
   return best;
+}
+
+/** The database's own qualitative rating, upper-cased, when it publishes one. */
+function ratingOf(vuln: any): string | null {
+  const raw = vuln?.database_specific?.severity;
+  return typeof raw === 'string' && raw ? raw.toUpperCase() : null;
 }
 
 function firstFixed(vuln: any): string | null {
@@ -59,6 +140,7 @@ function normalise(vuln: any): OsvVulnerability {
     details: typeof vuln?.details === 'string' ? vuln.details : undefined,
     aliases: Array.isArray(vuln?.aliases) ? vuln.aliases.map(String) : [],
     cvss: highestCvss(vuln),
+    rating: ratingOf(vuln),
     fixedIn: firstFixed(vuln),
   };
 }
@@ -109,8 +191,8 @@ export async function queryOsv(
       const q = queries[i]!;
       try {
         // cleartoship-ignore VG120 — OSV_QUERY is a module constant naming a
-    // fixed https://api.osv.dev endpoint; nothing user-controlled reaches it.
-    const res = await fetch(OSV_QUERY, {
+        // fixed https://api.osv.dev endpoint; nothing user-controlled reaches it.
+        const res = await fetch(OSV_QUERY, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
@@ -131,11 +213,32 @@ export async function queryOsv(
   return { results, failed: false };
 }
 
+type OsvSeverity = 'critical' | 'high' | 'medium' | 'low';
+
 /** Maps a CVSS base score onto our severity vocabulary. */
-export function severityFromCvss(cvss: number | null): 'critical' | 'high' | 'medium' | 'low' {
+export function severityFromCvss(cvss: number | null): OsvSeverity {
   if (cvss === null) return 'high';
   if (cvss >= 9) return 'critical';
   if (cvss >= 7) return 'high';
   if (cvss >= 4) return 'medium';
   return 'low';
+}
+
+const RATINGS: Record<string, OsvSeverity> = {
+  CRITICAL: 'critical',
+  HIGH: 'high',
+  MODERATE: 'medium',
+  MEDIUM: 'medium',
+  LOW: 'low',
+};
+
+/**
+ * The severity to report for one advisory: its computed CVSS score first, the
+ * database's own rating where no score can be derived (a v4-only or v2-only
+ * record), and `high` only when the record says nothing at all.
+ */
+export function severityForVulnerability(vuln: OsvVulnerability): OsvSeverity {
+  if (vuln.cvss !== null) return severityFromCvss(vuln.cvss);
+  const rated = vuln.rating ? RATINGS[vuln.rating] : undefined;
+  return rated ?? 'high';
 }

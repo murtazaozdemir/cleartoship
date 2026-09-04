@@ -124,6 +124,16 @@ program
     const cwdWasExplicit = program.getOptionValueSource('cwd') === 'cli';
     const { root, paths: scanPaths } = resolveRoot(opts.cwd, paths, cwdWasExplicit);
 
+    // `--min-severity` is a display control, but the exit code is computed from
+    // the findings that survive it — so `--min-severity high --fail-on low` used
+    // to hide the very findings it was told to fail on, and exit 0. The floor is
+    // clamped to the gate instead: you can quieten a report, never the build.
+    const minSeverity: Severity =
+      opts.failOn !== 'none' &&
+      SEVERITY_ORDER[opts.minSeverity as Severity] > SEVERITY_ORDER[opts.failOn as Severity]
+        ? (opts.failOn as Severity)
+        : (opts.minSeverity as Severity);
+
     const result = await scan({
       root,
       paths: scanPaths,
@@ -133,7 +143,7 @@ program
       noCommunity: opts.community === false,
       ignore: list(opts.ignore),
       only: list(opts.only),
-      minSeverity: opts.minSeverity as Severity,
+      minSeverity,
       verbose: opts.verbose,
       onProgress: interactive
         ? (step, total, name) => {

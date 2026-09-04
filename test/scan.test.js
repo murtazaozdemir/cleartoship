@@ -901,6 +901,22 @@ test('CVEs distinguish shipping deps from dev/build deps', { skip: !online && 'o
   assert.equal(prod.meta.production, true);
   assert.notEqual(prod.severity, 'low', 'a shipping CVE keeps its CVSS severity');
 
+  // `notEqual(…, 'low')` passed for a year while every advisory was reported
+  // `high` because the CVSS vector was never parsed. Assert the score itself.
+  assert.ok(
+    prod.meta.advisories.some((a) => typeof a.cvss === 'number'),
+    'a real CVSS score must be read off the record, not defaulted',
+  );
+  const { severityFromCvss } = await import('../dist/utils/osv.js');
+  const worst = prod.meta.advisories
+    .filter((a) => typeof a.cvss === 'number')
+    .reduce((a, b) => (b.cvss > a.cvss ? b : a));
+  assert.equal(
+    prod.severity,
+    severityFromCvss(worst.cvss),
+    'the severity reported is the one the worst score maps to',
+  );
+
   assert.equal(dev.meta.production, false);
   assert.equal(dev.severity, 'low', 'a dev/build CVE is held below the gate');
   assert.match(dev.title, /Dev dependency/);
@@ -961,4 +977,259 @@ test('A09/A10/A08 logic rules fire precisely and skip the safe cases', async () 
 test('logic rules do not fire on the clean fixture', async () => {
   const result = await scan({ root: CLEAN, offline: true });
   assert.ok(!result.findings.some((f) => ['CTS070', 'CTS071', 'CTS072'].includes(f.id)));
+});
+
+// ---------------------------------------------------------------------------
+// Regressions from the 0.13.4 audit. Every test below reproduces a defect that
+// shipped, so the fix stays fixed.
+// ---------------------------------------------------------------------------
+
+/** A throwaway project directory, populated from a {path: contents} map. */
+async function tempProject(files) {
+  const { mkdtempSync, writeFileSync, mkdirSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { dirname: dir } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'cts-audit-'));
+  for (const [name, contents] of Object.entries(files)) {
+    const full = join(root, name);
+    mkdirSync(dir(full), { recursive: true });
+    writeFileSync(full, contents);
+  }
+  return root;
+}
+
+const VULNERABLE_ROUTE = [
+  "import { createClient } from '@supabase/supabase-js';",
+  'export async function POST(req: Request) {',
+  '  const body = await req.json();',
+  '  const db = createClient(process.env.URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);',
+  "  await db.from('users').delete().eq('id', body.id);",
+  '  return Response.json({ ok: true });',
+  '}',
+  '',
+].join('\n');
+
+test('a directory named site/ is read, not skipped', async () => {
+  // `site` and `_reference` were on the skip list because they are this
+  // project's own layout. Every user with a site/ directory had that whole
+  // subtree reported clean without a single file being opened.
+  const root = await tempProject({
+    'package.json': '{"name":"x","dependencies":{"next":"15.0.0"}}\n',
+    'site/app/api/admin/route.ts': VULNERABLE_ROUTE,
+  });
+  const result = await scan({ root, offline: true, noCommunity: true });
+  const found = ids(result);
+  assert.ok(found.has('CTS001'), 'missing auth under site/ must still be reported');
+  assert.ok(found.has('CTS003'), 'service-role key under site/ must still be reported');
+});
+
+test('naming a single file scans that file', async () => {
+  // `cleartoship path/to/file.ts` is documented, and used to walk nothing:
+  // readdirSync on a file throws, the walk returned empty, and the run reported
+  // CLEAR TO SHIP having opened no files at all.
+  const root = await tempProject({
+    'package.json': '{"name":"x"}\n',
+    'app/api/admin/route.ts': VULNERABLE_ROUTE,
+  });
+  const result = await scan({
+    root,
+    paths: ['app/api/admin/route.ts'],
+    offline: true,
+    noCommunity: true,
+  });
+  assert.equal(result.fileCount, 1, 'the named file is the one file scanned');
+  assert.ok(ids(result).has('CTS001'));
+});
+
+test('a path that does not exist is reported, not silently empty', async () => {
+  const root = await tempProject({ 'package.json': '{"name":"x"}\n' });
+  const result = await scan({ root, paths: ['nope'], offline: true, noCommunity: true });
+  assert.ok(
+    result.warnings.some((w) => w.includes('does not exist')),
+    'a missing path must not read as a clean scan',
+  );
+});
+
+test('the walk says what it left unread', async () => {
+  const root = await tempProject({
+    'package.json': '{"name":"x"}\n',
+    'node_modules/pkg/index.js': 'export const a = 1;\n',
+    'huge.ts': `// ${'x'.repeat(2_100_000)}\n`,
+  });
+  const result = await scan({ root, offline: true, noCommunity: true });
+  assert.ok(result.skippedDirs.includes('node_modules'), 'skipped directories are named');
+  assert.equal(result.oversizeCount, 1, 'a file too large to read is counted');
+  assert.ok(
+    result.checks.some((c) => /too large to read/.test(c.label)),
+    'and both appear in the report rather than only in the walk',
+  );
+});
+
+test('a package this repository defines itself is not a hallucinated dependency', async () => {
+  // A library whose README says `npm install <its own name>` before the first
+  // publish was reported CTS020 critical — blocking the default gate, on
+  // entirely correct code. Runs online: the point is that no lookup happens.
+  const root = await tempProject({
+    'package.json': '{"name":"a-package-that-is-not-published-xyz9","version":"0.1.0"}\n',
+    'README.md': '# x\n\n```bash\nnpm install a-package-that-is-not-published-xyz9\n```\n',
+    'packages/ui/package.json': '{"name":"@acme-private/ui","version":"1.0.0"}\n',
+    'packages/app/package.json':
+      '{"name":"@acme-private/app","dependencies":{"@acme-private/ui":"^1.0.0"}}\n',
+  });
+  const result = await scan({ root, offline: true, noCommunity: true });
+  const named = result.findings
+    .filter((f) => ['CTS020', 'CTS021', 'CTS022', 'CTS023'].includes(f.id))
+    .map((f) => f.meta.package);
+  assert.deepEqual(named, [], 'neither the root package nor a sibling workspace is third-party');
+
+  const check = result.checks.find((c) => c.label.startsWith('Dependency verification'));
+  assert.match(check.note ?? '', /defined by this repository itself/, 'and the report says so');
+});
+
+test('CTS032 asks the gitignore matcher, not a list of literal strings', async () => {
+  // `/.env` and `.env.local` both genuinely cover the file beside them. Both
+  // were reported as uncovered — a high-severity finding on a correct repo.
+  const covered = [
+    ['/.env', '.env'],
+    ['.env.local', '.env.local'],
+    ['**/.env', '.env'],
+    ['.env*', '.env'],
+  ];
+  for (const [rule, envFile] of covered) {
+    const root = await tempProject({
+      'package.json': '{"name":"x"}\n',
+      '.gitignore': `${rule}\n`,
+      [envFile]: 'API_SECRET=abc\n',
+      '.git/HEAD': 'ref: refs/heads/main\n',
+    });
+    const result = await scan({ root, offline: true, noCommunity: true });
+    assert.ok(
+      !ids(result).has('CTS032'),
+      `.gitignore rule "${rule}" does cover ${envFile}; CTS032 must stay quiet`,
+    );
+  }
+
+  // A nested .gitignore counts too — git reads those, so this must.
+  const nested = await tempProject({
+    'package.json': '{"name":"x"}\n',
+    '.gitignore': 'node_modules\n',
+    'web/.gitignore': '.env\n',
+    'web/.env': 'API_SECRET=abc\n',
+    '.git/HEAD': 'ref: refs/heads/main\n',
+  });
+  assert.ok(!ids(await scan({ root: nested, offline: true, noCommunity: true })).has('CTS032'));
+
+  // And the real case still fires.
+  const uncovered = await tempProject({
+    'package.json': '{"name":"x"}\n',
+    '.gitignore': 'node_modules\n',
+    '.env': 'API_SECRET=abc\n',
+    '.git/HEAD': 'ref: refs/heads/main\n',
+  });
+  assert.ok(ids(await scan({ root: uncovered, offline: true, noCommunity: true })).has('CTS032'));
+});
+
+test('CVSS base scores are computed from the vector OSV actually publishes', async () => {
+  // OSV publishes `severity[].score` as a vector string, not a number. Reading
+  // it with Number() produced NaN on every GitHub-sourced advisory, so every
+  // CVE fell through to the null default and a 9.8 and a 5.3 both reported high.
+  const { cvssFromVector, severityFromCvss, severityForVulnerability } = await import(
+    '../dist/utils/osv.js'
+  );
+  const published = [
+    ['CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H', 10.0, 'critical'],
+    ['CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H', 9.8, 'critical'],
+    ['CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:H', 8.1, 'high'],
+    ['CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H', 7.8, 'high'],
+    ['CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H', 7.5, 'high'],
+    ['CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N', 6.1, 'medium'],
+    ['CVSS:3.0/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:N/A:N', 6.5, 'medium'],
+    ['CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L', 5.3, 'medium'],
+    ['CVSS:3.1/AV:P/AC:H/PR:H/UI:R/S:U/C:N/I:N/A:N', 0.0, 'low'],
+  ];
+  for (const [vector, score, severity] of published) {
+    assert.equal(cvssFromVector(vector), score, vector);
+    assert.equal(severityFromCvss(score), severity, vector);
+  }
+
+  // v2 and v4 vectors are not computed; those records fall back to the rating
+  // the database publishes rather than defaulting everything to high.
+  assert.equal(cvssFromVector('CVSS:2.0/AV:N/AC:L/Au:N/C:P/I:P/A:P'), null);
+  assert.equal(cvssFromVector('CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H'), null);
+  assert.equal(
+    severityForVulnerability({ cvss: null, rating: 'MODERATE' }),
+    'medium',
+    'a scoreless record uses the database rating',
+  );
+  assert.equal(severityForVulnerability({ cvss: null, rating: null }), 'high');
+  assert.equal(severityForVulnerability({ cvss: 9.4, rating: 'MODERATE' }), 'critical');
+});
+
+test('a secret in a client component is worse than the same secret on the server', async () => {
+  // The branch that was supposed to do this read
+  // `clientComponent && severity === 'critical' ? 'critical' : severity`,
+  // whose two arms are the same value, so it never raised anything.
+  const key = 'AIzaSyD9fT2kQ7pLm4Rv8XcW1nB3hJ6yU0oE5aZ';
+  const root = await tempProject({
+    'package.json': '{"name":"x"}\n',
+    'app/Widget.tsx': `'use client';\nconst k = "${key}";\nexport default () => k;\n`,
+    'app/server.ts': `const k = "${key}";\nexport const keys = k;\n`,
+  });
+  const result = await scan({ root, offline: true, noCommunity: true });
+  const byFile = Object.fromEntries(
+    result.findings.filter((f) => f.id === 'CTS030').map((f) => [f.file, f.severity]),
+  );
+  assert.equal(byFile['app/server.ts'], 'high', 'a Google key on the server keeps its severity');
+  assert.equal(byFile['app/Widget.tsx'], 'critical', 'and is one step worse in the bundle');
+});
+
+test('a real key containing filler digits is still reported', async () => {
+  // `1234567`, `xxx` and friends sat in the same list as `changeme` and
+  // `your_api_key`, so a live credential that happened to contain one was
+  // dropped — the one failure a secret scanner cannot afford.
+  const root = await tempProject({
+    'package.json': '{"name":"x"}\n',
+    'config.ts': [
+      'export const live = "AKIAQ1234567RSTUVWXY";',
+      'export const filler = "AKIAXXXXXXXXXXXXXXXX";',
+      '',
+    ].join('\n'),
+  });
+  const result = await scan({ root, offline: true, noCommunity: true });
+  const aws = result.findings.filter((f) => f.id === 'CTS030' && f.meta.kind === 'aws');
+  assert.equal(aws.length, 1, 'exactly one of the two is a credential');
+  assert.equal(aws[0].line, 1, 'the high-entropy one, not the run of X');
+});
+
+test('--min-severity cannot hide a finding the gate would fail on', async () => {
+  // It is documented as a display control, but the exit code was computed from
+  // the findings that survived it, so `--min-severity high --fail-on low` exited 0.
+  const out = runCli([
+    '-C', VULNERABLE, '--offline', '--no-banner', '--no-community',
+    '--min-severity', 'critical', '--fail-on', 'low',
+  ]);
+  assert.equal(out.code, 1, 'a low-severity gate still fails, however quiet the report');
+});
+
+test('repository text going into a PR comment cannot close the block it sits in', async () => {
+  const { renderMarkdown } = await import('../dist/report.js');
+  const hostile = {
+    id: 'CTS028',
+    severity: 'critical',
+    title: 'Install hook</summary><img src=x onerror=alert(1)>',
+    detail: 'The `postinstall` script (`</details><script>x</script>`) runs on every install.',
+    fix: 'Remove it.\n```\nnot a fence break\n```',
+    file: 'package.json',
+    line: 3,
+  };
+  const md = renderMarkdown({
+    root: '/x', framework: 'node', fileCount: 1, gitIgnoredCount: 0, escapingSymlinkCount: 0,
+    oversizeCount: 0, skippedDirs: [], findings: [hostile], checks: [], warnings: [],
+    counts: { critical: 1, high: 0, medium: 0, low: 0, info: 0 }, durationMs: 1,
+  });
+  assert.ok(!md.includes('<script>'), 'no raw script tag reaches the comment');
+  assert.ok(!md.includes('<img'), 'no raw img tag reaches the comment');
+  assert.ok(!md.includes('</details><'), 'the details block cannot be closed early');
+  assert.equal(md.match(/^```$/gm).length, 2, 'exactly one balanced fence');
+  assert.ok(md.includes('&lt;'), 'the text is escaped rather than dropped, so it stays readable');
 });

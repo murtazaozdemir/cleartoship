@@ -3,14 +3,14 @@
 Public backlog. Working notes, positioning and anything about other projects
 live in `NOTES.private.md`, which is gitignored and stays on my machine.
 
-_Current release: **v0.13.4** (npm `latest`)._
+_Current release: **v0.13.5** (npm `latest`)._
 _v0.13.0 and earlier published **unsigned** — npm's registry refuses provenance
 from a private source repo. The repository is public now, and `release.yml`
 reads its visibility, so 0.13.1 is the first release signed with provenance._
 
 ## Where this stands
 
-Thirteen releases, 0.8.0 → 0.13.4. The calibration work is the point of the project
+Fourteen releases, 0.8.0 → 0.13.5. The calibration work is the point of the project
 so far: across a five-repo corpus the tool went from 2,290 findings to a few
 hundred, and from 157 criticals to a handful — **every removal verified by
 reading the code it was about**, never by adjusting a threshold. Reports that
@@ -28,6 +28,24 @@ CTS083 matched `clients.delete(id)` on an in-memory `Set` because the root
 pattern accepted a prefix instead of a whole segment. Both were exactly the kind
 of thing dogfooding structurally cannot find — my repos all sit beside this one,
 and I would never have written `clients` for a Set.
+
+**0.13.5 is a full self-audit, and the self-scan is why most of it was found.**
+Ten defects, every one reproduced before it was fixed and covered by a test
+after. Three of them fired on other people's correct code — a repository with a
+`site/` directory had that whole subtree reported clean without a file being
+opened; a library whose README says `npm install <its own name>` before the
+first publish got a *critical* hallucinated-dependency finding; and `/.env` or
+`.env.local` in a `.gitignore` were both reported as failing to cover the file
+sitting next to them, because CTS032 compared the text against five literal
+strings instead of asking the matcher this repo already ships. A fourth was
+quieter and worse: OSV publishes `severity[].score` as a CVSS *vector*, so
+`Number()` returned `NaN` on every GitHub-sourced advisory and a 9.8 and a 5.3
+were both reported `high` — the "by CVSS" column was not what happened.
+
+The pattern worth keeping: the CI self-scan read `src` and nothing else, so the
+README, the manifests, the shipped Action and the landing page were never
+scanned by the tool that scans them for everyone else. Pointing it at all of
+them found a credential-shaped literal in a comment written the same afternoon.
 
 ## Open
 

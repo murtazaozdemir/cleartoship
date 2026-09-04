@@ -2,7 +2,7 @@ import { basename, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { read, rel, isProse, lineAt } from '../utils/files.js';
 import { Registry, pool } from '../utils/registry.js';
-import { queryOsv, severityFromCvss } from '../utils/osv.js';
+import { queryOsv, severityForVulnerability } from '../utils/osv.js';
 import type { OsvQuery } from '../utils/osv.js';
 import { POPULAR_NPM, POPULAR_PYPI, nearestPopular } from '../data/popular.js';
 import { emptyResult } from '../types.js';
@@ -94,6 +94,62 @@ function collectFromPyproject(source: string, relPath: string): Declared[] {
     out.push({ name, range: '', ecosystem: 'pypi', file: relPath, line: i + 1, dev: false });
   });
   return out;
+}
+
+/**
+ * The `name` this manifest publishes under, if any.
+ *
+ * A package the repository itself defines is not a third-party dependency, and
+ * asking a registry about it produces exactly the wrong answer: a library whose
+ * README says `npm install <its own name>` before the first publish was reported
+ * as a hallucinated package — a *critical*, blocking the default gate, on
+ * completely correct code. The same applies across a monorepo, where one
+ * workspace depends on another by name.
+ */
+function packageJsonName(source: string): string | null {
+  try {
+    const name = JSON.parse(source)?.name;
+    return typeof name === 'string' && name ? name : null;
+  } catch {
+    return null;
+  }
+}
+
+/** `[project] name` / `[tool.poetry] name` from a pyproject.toml. */
+function pyprojectName(source: string): string | null {
+  let inProject = false;
+  for (const raw of source.split('\n')) {
+    const line = raw.trim();
+    if (/^\[/.test(line)) {
+      inProject = /^\[(project|tool\.poetry)\]/.test(line);
+      continue;
+    }
+    if (!inProject) continue;
+    const m = /^name\s*=\s*["']([^"']+)["']/.exec(line);
+    if (m) return m[1]!;
+  }
+  return null;
+}
+
+/**
+ * Scopes an `.npmrc` points at a registry other than npmjs.org. A package in one
+ * of those resolves from somewhere this tool cannot see, so a 404 on the public
+ * registry says nothing about whether it exists — and CTS020 is a critical.
+ */
+function privateScopes(root: string): Set<string> {
+  const scopes = new Set<string>();
+  for (const name of ['.npmrc', '.yarnrc.yml']) {
+    let source: string;
+    try {
+      source = readFileSync(join(root, name), 'utf8');
+    } catch {
+      continue;
+    }
+    const re = /(@[a-z0-9-~][a-z0-9-._~]*)\s*:\s*registry\s*[=:]/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(source)) !== null) scopes.add(m[1]!.toLowerCase());
+  }
+  return scopes;
 }
 
 /** Valid npm package name, optionally scoped. */
@@ -198,9 +254,17 @@ function collectInstallScriptFindings(source: string, relPath: string): Finding[
  * since a lockfile is routinely megabytes). Where no lockfile exists, the
  * range's floor is used: `^14.2.3` resolves to `14.2.3`, which is the oldest
  * version the range permits and therefore the one worth checking.
+ *
+ * Keyed by ecosystem as well as name: `npm` and PyPI both publish a `click`, and
+ * a shared key handed the Python package the JavaScript one's lockfile version
+ * to query OSV with.
  */
 function resolveVersions(root: string, declared: Declared[]): Map<string, string> {
   const resolved = new Map<string, string>();
+  const setNpm = (name: string, version: string) => {
+    const key = `npm:${name}`;
+    if (!resolved.has(key)) resolved.set(key, version);
+  };
 
   const readIfPresent = (name: string): string | null => {
     try {
@@ -217,10 +281,10 @@ function resolveVersions(root: string, declared: Declared[]): Map<string, string
       for (const [path, entry] of Object.entries<any>(doc.packages ?? {})) {
         if (!path.startsWith('node_modules/')) continue;
         const name = path.slice(path.lastIndexOf('node_modules/') + 'node_modules/'.length);
-        if (entry?.version) resolved.set(name, String(entry.version));
+        if (entry?.version) setNpm(name, String(entry.version));
       }
       for (const [name, entry] of Object.entries<any>(doc.dependencies ?? {})) {
-        if (entry?.version && !resolved.has(name)) resolved.set(name, String(entry.version));
+        if (entry?.version) setNpm(name, String(entry.version));
       }
     } catch {
       /* a malformed lockfile just means we fall back to the range floor */
@@ -233,7 +297,7 @@ function resolveVersions(root: string, declared: Declared[]): Map<string, string
     const re = /^\s{2}\/?((?:@[^/\s]+\/)?[^/@\s]+)[@/](\d+\.\d+\.\d+[^\s:(]*)/gm;
     let m: RegExpExecArray | null;
     while ((m = re.exec(pnpmLock)) !== null) {
-      if (!resolved.has(m[1]!)) resolved.set(m[1]!, m[2]!);
+      setNpm(m[1]!, m[2]!);
     }
   }
 
@@ -264,7 +328,7 @@ function resolveVersions(root: string, declared: Declared[]): Map<string, string
       const version = /^\s+version:?\s+"?([^"\s]+)"?\s*$/.exec(rawLine)?.[1];
       if (version && pendingNames.length > 0) {
         for (const name of pendingNames) {
-          if (!resolved.has(name)) resolved.set(name, version);
+          setNpm(name, version);
         }
         pendingNames = [];
       }
@@ -273,9 +337,10 @@ function resolveVersions(root: string, declared: Declared[]): Map<string, string
 
   // Fall back to the floor of each declared range.
   for (const d of declared) {
-    if (resolved.has(d.name)) continue;
+    const key = `${d.ecosystem}:${d.name}`;
+    if (resolved.has(key)) continue;
     const floor = /(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]+)?)/.exec(d.range)?.[1];
-    if (floor) resolved.set(d.name, floor);
+    if (floor) resolved.set(key, floor);
   }
   return resolved;
 }
@@ -295,6 +360,9 @@ export const dependencyScanner: Scanner = {
   async run(ctx): Promise<ScanResult> {
     const result = emptyResult();
     const declared: Declared[] = [];
+    // Every package this repository defines itself — the root one and, in a
+    // monorepo, each workspace. None of them is a third-party dependency.
+    const local = new Set<string>();
 
     for (const file of ctx.files) {
       const b = basename(file);
@@ -302,17 +370,38 @@ export const dependencyScanner: Scanner = {
       if (source === null) continue;
       const relPath = rel(ctx.root, file);
       if (b === 'package.json') {
+        const own = packageJsonName(source);
+        if (own) local.add(`npm:${own}`);
         declared.push(...collectFromPackageJson(source, relPath));
         result.findings.push(...collectInstallScriptFindings(source, relPath));
       } else if (b === 'requirements.txt') declared.push(...collectFromRequirements(source, relPath));
-      else if (b === 'pyproject.toml') declared.push(...collectFromPyproject(source, relPath));
-      else if (isProse(file)) declared.push(...collectFromProse(source, relPath));
+      else if (b === 'pyproject.toml') {
+        const own = pyprojectName(source);
+        if (own) local.add(`pypi:${own}`);
+        declared.push(...collectFromPyproject(source, relPath));
+      } else if (isProse(file)) declared.push(...collectFromProse(source, relPath));
     }
 
     // Local workspace references never hit a registry.
-    const checkable = declared.filter(
-      (d) => !/^(file:|link:|workspace:|portal:|git\+|https?:|github:|npm:)/.test(d.range),
-    );
+    const scopes = privateScopes(ctx.root);
+    let skippedLocal = 0;
+    let skippedPrivate = 0;
+    const checkable = declared.filter((d) => {
+      if (/^(file:|link:|workspace:|portal:|git\+|https?:|github:|npm:)/.test(d.range)) return false;
+      // Defined right here — by the root manifest or a sibling workspace.
+      if (local.has(`${d.ecosystem}:${d.name}`)) {
+        skippedLocal++;
+        return false;
+      }
+      // Resolved from a registry this tool was never pointed at, so the public
+      // registry's answer about it is not evidence either way.
+      const scope = d.ecosystem === 'npm' ? /^(@[^/]+)\//.exec(d.name)?.[1]?.toLowerCase() : undefined;
+      if (scope && scopes.has(scope)) {
+        skippedPrivate++;
+        return false;
+      }
+      return true;
+    });
     // Dedupe by package, but let a manifest entry win over a mention in prose.
     // Files are walked alphabetically, so AGENTS.md is seen before package.json;
     // without this, a real dependency is recorded as a prose reference, which
@@ -325,8 +414,24 @@ export const dependencyScanner: Scanner = {
     }
     const list = [...unique.values()];
 
+    // Said once, and said on both paths: a project whose every dependency was
+    // skipped as local is not a project with no dependencies.
+    const skipNotes: string[] = [];
+    if (skippedLocal > 0) {
+      skipNotes.push(`${skippedLocal} defined by this repository itself, so not looked up`);
+    }
+    if (skippedPrivate > 0) {
+      skipNotes.push(
+        `${skippedPrivate} in a scope your .npmrc points at a private registry, which this cannot read`,
+      );
+    }
+
     if (list.length === 0) {
-      result.checks.push({ label: 'Dependency verification', passed: true, note: 'no dependencies declared' });
+      result.checks.push({
+        label: 'Dependency verification',
+        passed: true,
+        note: skipNotes.length > 0 ? skipNotes.join('; ') : 'no dependencies declared',
+      });
       return result;
     }
 
@@ -521,7 +626,7 @@ export const dependencyScanner: Scanner = {
     list.forEach((d, i) => {
       if (!facts[i]!.exists || facts[i]!.error) return;
       if (d.fromProse) return; // a mention in prose is not an installed version
-      const version = versions.get(d.name);
+      const version = versions.get(`${d.ecosystem}:${d.name}`);
       if (!version) return;
       osvQueries.push({
         name: d.name,
@@ -546,8 +651,15 @@ export const dependencyScanner: Scanner = {
         if (vulns.length === 0) return;
         const d = osvSubjects[i]!;
         const q = osvQueries[i]!;
-        // Report the worst one per package; the rest are listed in meta.
-        const worst = vulns.reduce((a, b) => ((b.cvss ?? 0) > (a.cvss ?? 0) ? b : a));
+        // Report the worst one per package; the rest are listed in meta. Ranked
+        // by the severity actually reported, so a record that only publishes a
+        // qualitative rating still competes with one that publishes a score.
+        const rank = { critical: 4, high: 3, medium: 2, low: 1 } as const;
+        const worst = vulns.reduce((a, b) => {
+          const byRank = rank[severityForVulnerability(b)] - rank[severityForVulnerability(a)];
+          if (byRank !== 0) return byRank > 0 ? b : a;
+          return (b.cvss ?? 0) > (a.cvss ?? 0) ? b : a;
+        });
         const cve = worst.aliases.find((a) => a.startsWith('CVE-')) ?? worst.id;
         const others = vulns.length - 1;
 
@@ -557,7 +669,7 @@ export const dependencyScanner: Scanner = {
         // gate so a linter CVE never blocks a deploy the way a runtime one does.
         const shipsToProd = !d.dev;
         const severity: typeof result.findings[number]['severity'] = shipsToProd
-          ? severityFromCvss(worst.cvss)
+          ? severityForVulnerability(worst)
           : 'low';
 
         result.findings.push({
@@ -567,8 +679,16 @@ export const dependencyScanner: Scanner = {
             ? `Dependency has a known vulnerability (${cve})`
             : `Dev dependency has a known vulnerability (${cve})`,
           detail:
-            `\`${d.name}@${q.version}\` is affected by ${cve}: ${worst.summary}` +
-            (worst.cvss !== null ? ` CVSS ${worst.cvss}.` : '') +
+            // The summary is upstream prose and often ends without punctuation,
+            // so the sentence break is added here rather than assumed — the
+            // clauses after it used to run straight on from the last word.
+            `\`${d.name}@${q.version}\` is affected by ${cve}: ` +
+            worst.summary.replace(/\s*$/, '').replace(/([^.!?])$/, '$1.') +
+            (worst.cvss !== null
+              ? ` CVSS ${worst.cvss.toFixed(1)}.`
+              : worst.rating
+                ? ` Rated ${worst.rating.toLowerCase()} by the advisory database, which publishes no score for it.`
+                : '') +
             (others > 0
               ? ` ${others} further advisor${others === 1 ? 'y' : 'ies'} also affect this version.`
               : '') +
@@ -586,11 +706,13 @@ export const dependencyScanner: Scanner = {
             package: d.name,
             version: q.version,
             production: shipsToProd,
-            resolvedFrom: versions.has(d.name) ? 'lockfile-or-range' : 'range',
+            resolvedFrom: versions.has(`${d.ecosystem}:${d.name}`) ? 'lockfile-or-range' : 'range',
             advisories: vulns.map((v) => ({
               id: v.id,
               aliases: v.aliases,
               cvss: v.cvss,
+              rating: v.rating,
+              severity: severityForVulnerability(v),
               fixedIn: v.fixedIn,
             })),
           },
@@ -616,10 +738,11 @@ export const dependencyScanner: Scanner = {
     const missing = result.findings.filter((f) =>
       ['CTS020', 'CTS026', 'CTS027'].includes(f.id),
     ).length;
+    const notes = missing > 0 ? [`${missing} could not be resolved`, ...skipNotes] : [...skipNotes];
     result.checks.push({
       label: `Dependency verification (${list.length} package${list.length === 1 ? '' : 's'} checked against npm/PyPI)`,
       passed: missing === 0,
-      note: missing > 0 ? `${missing} could not be resolved` : undefined,
+      note: notes.length > 0 ? notes.join('; ') : undefined,
     });
     return result;
   },

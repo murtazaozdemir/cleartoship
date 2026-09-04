@@ -196,6 +196,38 @@ export class Gitignore {
   }
 }
 
+/**
+ * The ignore rules that apply to one path, assembled by descending from the
+ * scan root — root `.gitignore`, `.git/info/exclude`, and every nested
+ * `.gitignore` on the way down, in git's own precedence order.
+ *
+ * Exists so a rule that needs to ask "would git ignore this?" about a single
+ * file can ask this matcher instead of pattern-matching the text of a
+ * `.gitignore` itself. CTS032 did the latter — it compared the root file's
+ * lines against five literal strings — and so reported `/.env` and `.env.local`
+ * as *not* covering the very files they cover, a high-severity finding on a
+ * correctly configured repository.
+ */
+export function rulesForPath(
+  root: string,
+  absPath: string,
+  read: (path: string) => string | null,
+): Gitignore {
+  let rules = extendedAt(repositoryExcludes(root, read), root, read);
+  if (!absPath.startsWith(root)) return rules;
+  const segments = absPath
+    .slice(root.length)
+    .split(/[/\\]+/)
+    .filter(Boolean)
+    .slice(0, -1); // the file's own name is not a directory to descend into
+  let dir = root.replace(/[/\\]+$/, '');
+  for (const segment of segments) {
+    dir = join(dir, segment);
+    rules = extendedAt(rules, dir, read);
+  }
+  return rules;
+}
+
 /** The ignore rules that apply at `dir`, given those inherited from above. */
 export function extendedAt(
   parent: Gitignore,

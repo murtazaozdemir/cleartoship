@@ -1,6 +1,8 @@
 import { basename } from 'node:path';
 import { read, rel, lineAt, snippetAt, exists, isScript } from '../utils/files.js';
+import { rulesForPath } from '../utils/gitignore.js';
 import { Suppressions } from '../utils/suppress.js';
+import { promote } from '../utils/paths.js';
 import { emptyResult } from '../types.js';
 import type { Finding, ProjectContext, ScanResult, Scanner, Severity } from '../types.js';
 import { join } from 'node:path';
@@ -67,11 +69,35 @@ const PATTERNS: Pattern[] = [
  * Values that are obviously stand-ins rather than live credentials. Docs,
  * READMEs and rule fixtures are full of these and reporting them is pure noise.
  */
-const PLACEHOLDER =
-  /(your[_-]?|example|placeholder|sample|template|<[a-z_ -]+>|\.\.\.|\u2026|changeme|change_me|dummy|redacted|notreal|fake|mock|s3cret|abc123|deadbeef|1234567|xxx|yyy|zzz|\bfoo\b|\bbar\b)/i;
+const PLACEHOLDER_STRONG =
+  /(your[_-]?|example|placeholder|sample|template|<[a-z_ -]+>|\.\.\.|\u2026|changeme|change_me|dummy|redacted|notreal|fake|mock)/i;
+
+/**
+ * Filler that also turns up by chance inside a genuine credential. An AWS key
+ * id whose random half happens to run seven digits in sequence contains
+ * `1234567`; `xxx` appears in a random 36-character token often enough to
+ * matter. These were in the same list as the words above, so a live key
+ * containing one was silently discarded — a scanner missing a real leak, which
+ * is the one failure it cannot afford. They now only disqualify a value that is
+ * filler throughout rather than a random string that happens to contain a run.
+ *
+ * (Spelled out rather than illustrated on purpose: an example key written here
+ * would be a credential-shaped literal in shipped source, and this tool would
+ * be right to report it. It did.)
+ */
+const PLACEHOLDER_WEAK = /(s3cret|abc123|deadbeef|1234567|xxx|yyy|zzz|\bfoo\b|\bbar\b)/i;
+
+/** Below this, a value is filler rather than a credential (`your_api_key_here` scores ~3.4). */
+const FILLER_ENTROPY = 3.5;
 
 /** The same character five or more times running, as in a filler-value key. */
 const REPEATED_RUN = /(.)\1{4,}/;
+
+function isPlaceholder(value: string): boolean {
+  if (REPEATED_RUN.test(value)) return true;
+  if (PLACEHOLDER_STRONG.test(value)) return true;
+  return PLACEHOLDER_WEAK.test(value) && shannonEntropy(value) < FILLER_ENTROPY;
+}
 
 /**
  * Vendored gitleaks rules withheld as noisy in this tool's context, measured
@@ -106,6 +132,13 @@ const NON_PRODUCTION_PATH =
 const PUBLIC_BY_DESIGN =
   /(ANON_KEY|PUBLISHABLE_KEY|PUBLIC_KEY|CLIENT_ID|MEASUREMENT_ID|PROJECT_ID|APP_ID|SENDER_ID|FIREBASE_API_KEY|MAPBOX_TOKEN|POSTHOG_KEY|SENTRY_DSN|SHOPIFY_API_KEY)$/;
 const SECRETY_NAME = /(SECRET|SERVICE_ROLE|PRIVATE|PASSWORD|PASSWD|_TOKEN|API_KEY|ACCESS_KEY|CREDENTIAL)/;
+
+/**
+ * Matches per rule, per file, that get their own finding. A vendored pattern
+ * that hits fifty times in one file is describing the file, not fifty separate
+ * problems — but the count is reported rather than dropped.
+ */
+const MAX_HITS_PER_RULE = 3;
 
 const LOCKFILES = new Set([
   'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'bun.lock', 'bun.lockb',
@@ -160,6 +193,10 @@ export const secretsScanner: Scanner = {
     const result = emptyResult();
     let filesScanned = 0;
     const seen = new Set<string>();
+    // Files where a rule matched more times than the per-file cap lists. Left
+    // unsaid, this is a report that quietly stops counting: twenty leaked keys
+    // in one file read as three.
+    const truncated = new Set<string>();
 
     for (const file of ctx.files) {
       const name = basename(file);
@@ -179,7 +216,7 @@ export const secretsScanner: Scanner = {
         while ((m = pattern.re.exec(source)) !== null) {
           const value = m[0];
           if (pattern.confirm && !pattern.confirm(value)) continue;
-          if (PLACEHOLDER.test(value) || REPEATED_RUN.test(value)) continue;
+          if (isPlaceholder(value)) continue;
           if (pattern.id === 'supabase-anon') continue; // informational only, not reported
           const line = lineAt(source, m.index);
           if (isCommentedOut(source, m.index)) continue; // documented example, not a live secret
@@ -196,11 +233,19 @@ export const secretsScanner: Scanner = {
           const rawLine = source.split('\n')[line - 1] ?? '';
           const safeLine = rawLine.split(value).join(redacted).trim();
           const snippet = safeLine.length > 160 ? safeLine.slice(0, 157) + '...' : safeLine;
+          // A client component compiles into the bundle every visitor
+          // downloads, so the same value is worse there than on the server.
+          // This used to read `clientComponent && pattern.severity === 'critical'
+          // ? 'critical' : pattern.severity`, whose two arms are the same value —
+          // so being in a client component never actually raised anything.
+          // Promoted one step rather than pinned to critical: a Stripe *test*
+          // key in the bundle is a real leak and not a critical one, and
+          // overstating it is the failure this project exists to avoid.
           const severity: Severity =
             isExample || fixtureFile
               ? 'low'
-              : clientComponent && pattern.severity === 'critical'
-                ? 'critical'
+              : clientComponent
+                ? promote(pattern.severity)
                 : pattern.severity;
 
           result.findings.push({
@@ -255,7 +300,7 @@ export const secretsScanner: Scanner = {
 
           if (HEX_DIGEST.test(secret)) continue;
           if (rule.entropy !== null && shannonEntropy(secret) < rule.entropy) continue;
-          if (PLACEHOLDER.test(secret) || REPEATED_RUN.test(secret)) continue;
+          if (isPlaceholder(secret)) continue;
           if (GITLEAKS_STOPWORDS.some((w) => secret.toLowerCase().includes(w))) continue;
           if (isCommentedOut(source, g.index)) continue;
           // A hand-written pattern already claimed this location.
@@ -273,7 +318,7 @@ export const secretsScanner: Scanner = {
 
           result.findings.push({
             id: findingId,
-            severity: isExample || fixtureFile ? 'low' : clientComponent ? 'critical' : 'high',
+            severity: isExample || fixtureFile ? 'low' : clientComponent ? promote('high') : 'high',
             title: `Hardcoded credential (${rule.id})`,
             detail:
               rule.description +
@@ -301,7 +346,11 @@ export const secretsScanner: Scanner = {
               entropy: Number(shannonEntropy(secret).toFixed(2)),
             },
           });
-          if (++hits >= 3) break;
+          if (++hits >= MAX_HITS_PER_RULE) {
+            // Peek: only claim there is more if there actually is.
+            if (rule.pattern.exec(source) !== null) truncated.add(relPath);
+            break;
+          }
         }
       }
 
@@ -437,19 +486,22 @@ export const secretsScanner: Scanner = {
       }
     }
 
-    // Are real .env files kept out of git?
-    const gitignore = read(join(ctx.root, '.gitignore'));
-    const envFiles = ctx.files
-      .map((f) => rel(ctx.root, f))
-      .filter((f) => /(^|\/)\.env(\.|$)/.test(f) && !/\.(example|sample|template)$/.test(f));
-    if (envFiles.length > 0 && exists(join(ctx.root, '.git'))) {
-      const covered =
-        gitignore !== null &&
-        gitignore.split('\n').some((l) => {
-          const t = l.trim();
-          return t === '.env' || t === '.env*' || t === '*.env' || t === '.env.*' || t === '.env*.local';
-        });
-      if (!covered) {
+    // Are real .env files kept out of git? Answered by the same matcher the
+    // walk uses, not by string-matching the text of a .gitignore: `/.env`,
+    // `.env.local`, `**/.env` and a rule in a nested .gitignore all genuinely
+    // cover the file, and a list of accepted literals called every one of them
+    // uncovered.
+    const envPaths = ctx.files.filter(
+      (f) =>
+        /(^|\/)\.env(\.|$)/.test(rel(ctx.root, f)) &&
+        !/\.(example|sample|template)$/.test(f),
+    );
+    if (envPaths.length > 0 && exists(join(ctx.root, '.git'))) {
+      const uncovered = envPaths
+        .filter((abs) => !rulesForPath(ctx.root, abs, read).ignores(abs, false))
+        .map((abs) => rel(ctx.root, abs));
+      if (uncovered.length > 0) {
+        const envFiles = uncovered;
         result.findings.push({
           id: 'CTS032',
           severity: 'high',
@@ -469,12 +521,20 @@ export const secretsScanner: Scanner = {
     }
 
     const leaked = result.findings.filter((f) => f.id !== 'CTS032' && f.severity !== 'low').length;
+    const notes = [`${GITLEAKS_WITHHELD.size} gitleaks rules withheld as noisy`];
+    if (truncated.size > 0) {
+      notes.push(
+        `${truncated.size} file${truncated.size === 1 ? '' : 's'} had more matches than the ` +
+          `${MAX_HITS_PER_RULE}-per-rule cap lists (${[...truncated].sort().slice(0, 3).join(', ')}` +
+          `${truncated.size > 3 ? ', …' : ''}) — fix those files by hand, not one finding at a time`,
+      );
+    }
     result.checks.push({
       label:
         `Secret & client-bundle boundary (${filesScanned} file${filesScanned === 1 ? '' : 's'}, ` +
         `${PATTERNS.length + GITLEAKS_RULES.length - GITLEAKS_WITHHELD.size} credential patterns)`,
       passed: leaked === 0,
-      note: `${GITLEAKS_WITHHELD.size} gitleaks rules withheld as noisy`,
+      note: notes.join('; '),
     });
     return result;
   },

@@ -101,7 +101,14 @@ export function renderTerminal(scan: FullScan, opts: { showPassed: boolean } = {
   } else if (blocking > 0) {
     out.push(`  ${pc.bold(pc.yellow('VERDICT: 🟡 CONDITIONAL — no criticals, but high-severity gaps remain'))}`);
   } else if (total > 0) {
-    out.push(`  ${pc.bold(pc.green('VERDICT: 🟢 CLEAR TO SHIP'))} ${pc.dim(`— ${total} low-priority note${total === 1 ? '' : 's'}`)}`);
+    // Mediums are not "low-priority notes". Saying so about a finding the
+    // reader can see is rated medium is the small dishonesty that teaches
+    // people to stop reading the verdict line.
+    const tail =
+      scan.counts.medium > 0
+        ? `— ${total} non-blocking finding${total === 1 ? '' : 's'}, ${scan.counts.medium} medium`
+        : `— ${total} low-priority note${total === 1 ? '' : 's'}`;
+    out.push(`  ${pc.bold(pc.green('VERDICT: 🟢 CLEAR TO SHIP'))} ${pc.dim(tail)}`);
   } else {
     out.push(`  ${pc.bold(pc.green('VERDICT: 🟢 CLEAR TO SHIP — all checks passed'))}`);
   }
@@ -128,6 +135,8 @@ export function renderJson(scan: FullScan): string {
       fileCount: scan.fileCount,
       gitIgnoredCount: scan.gitIgnoredCount,
       escapingSymlinkCount: scan.escapingSymlinkCount,
+      oversizeCount: scan.oversizeCount,
+      skippedDirs: scan.skippedDirs,
       durationMs: scan.durationMs,
       verdict:
         scan.counts.critical > 0 ? 'hold' : scan.counts.high > 0 ? 'conditional' : 'clear',
@@ -228,14 +237,14 @@ export function renderFixPrompt(scan: FullScan): string {
       lines.push(`### ${i + 1}. ${f.title} \`${f.id}\``);
       lines.push('');
       if (f.file) lines.push(`**Location:** \`${f.file}${f.line ? `:${f.line}` : ''}\``);
-      if (f.snippet) lines.push(`**Offending line:** \`${f.snippet}\``);
+      if (f.snippet) lines.push(`**Offending line:** \`${fenceSafe(f.snippet)}\``);
       lines.push('');
-      lines.push(`**Problem:** ${f.detail}`);
+      lines.push(`**Problem:** ${fenceSafe(f.detail)}`);
       lines.push('');
       lines.push('**Required fix:**');
       lines.push('');
       lines.push('```');
-      lines.push(f.fix);
+      lines.push(fenceSafe(f.fix));
       lines.push('```');
       lines.push('');
     });
@@ -248,6 +257,27 @@ export function renderFixPrompt(scan: FullScan): string {
   );
   lines.push('');
   return lines.join('\n');
+}
+
+/**
+ * Text that came out of the scanned repository, on its way into a pull-request
+ * comment. A finding's detail quotes what it found — a package name, an install
+ * script, a source line — and the Action posts that to GitHub, where raw HTML
+ * renders. `</details>` in a package.json script would close the block it was
+ * supposed to sit inside; an `<img>` would fetch on view. Escaped rather than
+ * stripped, so the reader still sees exactly what is in their repo.
+ */
+function mdSafe(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/```/g, '`\u200b``');
+}
+
+/** The same, for text going inside a fenced block: only the fence can break out. */
+function fenceSafe(text: string): string {
+  return text.replace(/```/g, '`\u200b``');
 }
 
 const MD_SEVERITY: Record<Severity, string> = {
@@ -305,8 +335,8 @@ export function renderMarkdown(scan: FullScan): string {
   const table = (findings: Finding[]) => {
     const rows = ['| Severity | Rule | Finding | Location |', '| --- | --- | --- | --- |'];
     for (const f of findings) {
-      const loc = f.file ? `\`${f.file}${f.line ? `:${f.line}` : ''}\`` : '—';
-      const title = f.title.replace(/\|/g, '\\|');
+      const loc = f.file ? `\`${mdSafe(f.file)}${f.line ? `:${f.line}` : ''}\`` : '—';
+      const title = mdSafe(f.title).replace(/\|/g, '\\|');
       rows.push(`| ${MD_SEVERITY[f.severity]} | \`${f.id}\` | ${title} | ${loc} |`);
     }
     return rows.join('\n');
@@ -329,12 +359,14 @@ export function renderMarkdown(scan: FullScan): string {
   // command away, so the comment stays scannable.
   const worst = scan.findings[0];
   if (worst) {
-    out.push(`<details><summary>How to fix <code>${worst.id}</code> — ${worst.title}</summary>`);
+    out.push(
+      `<details><summary>How to fix <code>${mdSafe(worst.id)}</code> — ${mdSafe(worst.title)}</summary>`,
+    );
     out.push('');
-    out.push(worst.detail);
+    out.push(mdSafe(worst.detail));
     out.push('');
     out.push('```');
-    out.push(worst.fix);
+    out.push(fenceSafe(worst.fix));
     out.push('```');
     out.push('');
     out.push('</details>');

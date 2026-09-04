@@ -170,7 +170,7 @@ it is strongest exactly where AI-generated code fails. Coverage by category:
 
 Counts, measured across the vendored ruleset after normalisation: A01 121,
 A05 112, A04 78, A02 59, A03 32, A07 17, A06 13, A08 11, A09 2. ClearToShip's
-own 48 rules add A01 21, A03 9, A04 7, A08 3, A05 3, and one each for A07, A09
+own 46 rules add A01 21, A03 9, A04 7, A08 3, A05 3, and one each for A07, A09
 and A10 — which is the category no vendored rule reaches.
 
 ## OWASP Top 10 for LLM Applications (2026) — coverage
@@ -276,7 +276,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: murtazaozdemir/cleartoship@v0.13.4
+      - uses: murtazaozdemir/cleartoship@v0.13.5
         with:
           fail-on: critical
           comment: true
@@ -298,7 +298,7 @@ above `fail-on`) for use in later steps. The comment is *sticky* — re-runs edi
 the same comment instead of piling up.
 
 By default the action runs the scanner version its own ref declares, so
-`@v0.13.4` runs `cleartoship@0.13.4` and pinning the ref pins the behaviour. If
+`@v0.13.5` runs `cleartoship@0.13.5` and pinning the ref pins the behaviour. If
 that version is not on the registry, it builds from its own checkout instead, so
 `uses: …@ref` works against an unpublished commit.
 

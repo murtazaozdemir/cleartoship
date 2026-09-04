@@ -51,6 +51,19 @@ export function demote(severity: Severity): Severity {
 }
 
 /**
+ * One step up the scale, capped at `critical`.
+ *
+ * The mirror of `demote`, for the case where the surrounding context makes a
+ * finding worse than the rule alone knows: a credential that would be a
+ * contained problem on the server is a different problem once the file it sits
+ * in is compiled into the bundle every visitor downloads.
+ */
+export function promote(severity: Severity): Severity {
+  const index = SEVERITY_ORDER[severity];
+  return ORDER[Math.min(ORDER.length - 1, index + 1)]!;
+}
+
+/**
  * The severity a finding should carry once you know where it lives, plus the
  * sentence explaining the adjustment — always stated, never silent.
  */

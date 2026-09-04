@@ -38,5 +38,35 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # The fixtures under test/ are intentionally vulnerable, so scan src only.
-      - run: node dist/cli.js src --fail-on=critical
+      # Everything except the fixtures under test/, which are deliberately
+      # vulnerable. Listed explicitly rather than scanning `src` alone: the
+      # README, the manifests, the shipped Action and the landing page are all
+      # part of what this publishes, and a self-scan that read none of them let
+      # a false positive on this project's own README survive a release.
+      - run: >-
+          node dist/cli.js
+          src site examples scripts .github
+          action.yml package.json README.md SECURITY.md ATTRIBUTION.md TODO.md
+          --fail-on=critical
+
+  # A version that appears in prose drifts; one that is asserted does not.
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Docs must pin the version this repo declares
+        run: |
+          # action.yml resolves its own version without a literal, because that
+          # line was twice left naming the previous release during a bump. Prose
+          # cannot do that, so it is asserted instead.
+          ver=$(node -p "require('./package.json').version")
+          fail=0
+          for f in examples/security.yml README.md; do
+            if grep -q 'cleartoship@v' "$f" && ! grep -qE "cleartoship@v${ver}([^0-9.]|$)" "$f"; then
+              echo "::error file=${f}::${f} does not pin v${ver}"
+              grep -n 'cleartoship@v' "$f"
+              fail=1
+            fi
+          done
+          test "$fail" = 0 || exit 1
+          echo "examples/security.yml and README.md pin v${ver}"

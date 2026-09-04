@@ -36,13 +36,27 @@ jobs:
             echo "::error::tag ${GITHUB_REF_NAME} does not match package.json version ${pkg}"
             exit 1
           }
+          # The shipped example pins a literal version, which is the line that
+          # has twice been left naming the previous release during a bump.
+          for f in examples/security.yml README.md; do
+            grep -qE "cleartoship@v${pkg}([^0-9.]|$)" "$f" || {
+              echo "::error file=${f}::${f} does not pin v${pkg}"
+              grep -n 'cleartoship@v' "$f"
+              exit 1
+            }
+          done
           echo "releasing ${pkg}"
 
       - run: npm ci
       - run: npm run build
       - run: npm test
-      # The fixtures under test/ are intentionally vulnerable, so scan src only.
-      - run: node dist/cli.js src --fail-on=critical
+      # The fixtures under test/ are intentionally vulnerable; everything else
+      # this publishes gets scanned, docs and manifests included.
+      - run: >-
+          node dist/cli.js
+          src site examples scripts .github
+          action.yml package.json README.md SECURITY.md ATTRIBUTION.md TODO.md
+          --fail-on=critical
 
       - name: Check the npm token before building anything
         env:
