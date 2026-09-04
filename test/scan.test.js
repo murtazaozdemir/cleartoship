@@ -1190,8 +1190,10 @@ test('a real key containing filler digits is still reported', async () => {
   const root = await tempProject({
     'package.json': '{"name":"x"}\n',
     'config.ts': [
-      'export const live = "AKIAQ1234567RSTUVWXY";',
-      'export const filler = "AKIAXXXXXXXXXXXXXXXX";',
+      // The second value is *defined* as a run of sixteen identical characters,
+      // and `'X'.repeat(16)` says so where counting X's in a literal does not.
+      `export const live = "AKIA${'Q1234567RSTUVWXY'}";`,
+      `export const filler = "AKIA${'X'.repeat(16)}";`,
       '',
     ].join('\n'),
   });
