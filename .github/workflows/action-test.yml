@@ -70,6 +70,22 @@ jobs:
           offline: 'true'
           comment: 'true'
           version: latest
+      - name: Assert it actually ran the published package
+        run: |
+          # This job exists to prove the *published* package works. It could not:
+          # `version: latest` fails to resolve when nothing is published, the
+          # action falls back to building from the checkout, the clean verdict
+          # comes back, and the job goes green having tested the thing it was
+          # written to be a control for. The one canary for a broken publish was
+          # blind to a broken publish.
+          test "${{ steps.scan.outputs.resolved }}" = "published" || {
+            echo "::error::Resolved '${{ steps.scan.outputs.resolved }}', not 'published'."
+            echo "::error::cleartoship@latest is not on the registry, so this job graded a"
+            echo "::error::local build. That is a real problem — npx cleartoship is the"
+            echo "::error::install path in the README — not a reason to pass."
+            exit 1
+          }
+
       - name: Assert the published package returns a clean verdict
         run: |
           test "${{ steps.scan.outputs.verdict }}" = "clear" || {
