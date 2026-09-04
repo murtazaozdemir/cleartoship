@@ -58,6 +58,11 @@ writeFileSync(
       license: pkg.license,
       type: 'module',
       bin: { cleartoship: 'bin/cleartoship.mjs' },
+      // Stated explicitly because the raw single-file copy sits in this same
+      // directory for the release step to pick up, and without a `files` list
+      // npm packs it too — shipping the 2 MB bundle twice and doubling the
+      // download for nothing.
+      files: ['bin', 'README.md', 'LICENSE', 'ATTRIBUTION.md', 'SECURITY.md'],
       engines: pkg.engines,
       repository: pkg.repository,
       homepage: pkg.homepage,
