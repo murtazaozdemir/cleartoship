@@ -21,3 +21,7 @@ NOTES.private.md
 
 # `npm run bundle` output — built in CI, attached to the release.
 standalone/
+
+# `npx skills` manager state. The skill itself is tracked in .claude/skills/.
+.agents/
+skills-lock.json
