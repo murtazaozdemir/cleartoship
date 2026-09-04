@@ -144,6 +144,11 @@ function compile(line: string): Rule | null {
   // ignored, 28 of them tracked, in one real repository.
   const source = anchored ? `^${body}$` : `(?:^|/)${body}$`;
   try {
+    // cleartoship-ignore VG126 — the pattern is from the scanned repository, so
+    // the rule has the shape right. It is capped at MAX_PATTERN and MAX_RULES
+    // before reaching the compiler, `translate` collapses `****` instead of
+    // emitting the nested quantifiers that backtrack, and the throw is caught
+    // below rather than ending the scan.
     return { re: new RegExp(source), negated, dirOnly };
   } catch {
     // `[z-a]` is a reversed range, and one line of it used to end the scan:
