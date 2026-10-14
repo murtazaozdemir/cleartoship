@@ -297,7 +297,8 @@ by this repository itself, so not looked up" — verified again with a cold cach
 
 **Verification:** 238 → 252 tests; 12 of the 14 new ones fail against the
 pre-fix build, and the other two are the true positives each fix had to keep
-(VG1008 on an ungated `update({ is_admin: true })`, VG154 on the credits race). Before/after over eleven real repositories (aistoreaudit,
+(VG1008 on an ungated `update({ is_admin: true })`, VG154 on the credits
+race). Before/after over eleven real repositories (aistoreaudit,
 BizDataly, Cherrly, AppVitrine, StorageVisual, datavot, SysXray, guardvibe,
 splinter, dep-hallucinator, gitleaks): −17 VG012, −13 VG999, −1 VG1008, −1
 CTS050, +6 VG012 on SysXray's HTML dashboards, which are newly read and really
@@ -309,7 +310,8 @@ the corpus. The self-scan went 64 → 68 files — it reads
 the landing pages now — and stayed 🟢 on the same five lows, after the first
 HTML-reading run reported a `high` on `site/public/index.html`'s own
 `innerHTML`, which was the escaped-constant false positive above. Not released
-yet: these are on `main` and ship with the next tag.
+yet: the work sits on the branch `audit-2026-10-13`, unpushed, and reaches
+users only once it is merged and a tag ships it.
 
 ## Open
 
@@ -388,6 +390,36 @@ yet: these are on `main` and ship with the next tag.
       severity-mapping or dev-dependency-splitting bug like the ones CTS024
       already exists to fix. Needs the same read-the-code treatment the other
       rules got; hasn't started.
+
+- [ ] **The 2026-10-13 audit is not released.** Eleven fixes are committed on
+      the branch `audit-2026-10-13` (`4e1d149`), nothing pushed, `main`
+      untouched. They change scanner behaviour — rules that fired on correct
+      code now stay quiet, four classes of file and five vendored rules are
+      read for the first time — so nobody gets them until the branch is merged
+      and a `v*` tag ships it. Cutting it means 0.13.14: bump `package.json`
+      and the two root `version` fields in `package-lock.json`, update the
+      version literals the pin script checks (`README.md`, `examples/*.yml`,
+      `site/public/*.html`), let CI go green on `main`, then tag — and verify
+      the artifact, not the step, per `.claude/skills/cleartoship-release`.
+- [ ] **Three things the audit noticed and did not act on.** 8 vendored rules
+      carry an `API:`-prefixed OWASP label (the API Security Top 10, a
+      different list) that the README's OWASP table does not mention, so those
+      rules' category reads as unmapped. Now that `site/public` HTML is
+      actually read, static-site rules like VG142 (missing Subresource
+      Integrity on a CDN `<script>`) can fire on landing pages where the CDN is
+      a deliberate choice — no noise on this repo's four pages, but worth
+      watching on the first user who scans a marketing site. And
+      `/license/verify` on the Worker is unauthenticated by design (anyone can
+      ask whether a key is valid); the mitigation is the Cloudflare rate-limit
+      rule already listed in the maintainer-settings item above, not a code
+      change.
+- [ ] **Six new VG012 findings on SysXray, nothing written down yet.** The
+      sweep read SysXray's HTML dashboards for the first time and they really
+      do assign `innerHTML` from strings concatenated out of scan data
+      (`innerHTML=cpuTopHtml`). Per the convention, new findings on one of my
+      own apps belong in `security-scans/<date>-<time>.md` in *that* repo, not
+      here — decide whether these are worth a report (the data is local machine
+      telemetry, not attacker-controlled input) and write it there if so.
 
 ## Later — recorded, not being worked on
 
