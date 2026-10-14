@@ -63,6 +63,12 @@ const SUPERSEDED = new Map<string, string>([
   ['VG960', 'CTS044'], // Server Actions suite
   ['VG1007', 'CTS003'], // Server Actions suite
   ['VG1010', 'CTS002'], // Server Actions suite
+  // Same defect, same line, twice: CTS081 reads the call's own option keys for
+  // `max_tokens` / `maxTokens` / `maxOutputTokens` off the AST, and only where
+  // the call is reachable from a request — which is the calibration, not an
+  // omission. A model call in a build script with no ceiling is not a bill
+  // anyone else can run up.
+  ['VG999', 'CTS081'], // LLM & agent suite
 ]);
 
 /**
@@ -241,6 +247,139 @@ function callArgs(source: string, index: number): string {
  * Per-rule filters for a match shape the upstream regex cannot exclude on its
  * own. Given the matched text plus where it sat, so a guard can look around it.
  */
+/**
+ * The function body a match sits in, back to that function's own opening brace.
+ *
+ * A guard that asks "is the check above this line?" must ask it of the scope
+ * the line is in. Reading the whole file (which VG1025's guard does) credits a
+ * check written in a different function; reading a fixed window backwards cuts
+ * through the function header. So the walk goes backwards over balanced braces
+ * and stops at the first unbalanced `{` that a function or arrow header opened,
+ * climbing out of the `if`/`try`/`for` blocks on the way.
+ */
+export function enclosingBody(source: string, index: number, limit = 4000): string {
+  const floor = Math.max(0, index - limit);
+  let start = floor;
+  let depth = 0;
+  let climbs = 0;
+  for (let i = index - 1; i >= floor; i--) {
+    const c = source[i];
+    if (c === '}') {
+      depth++;
+      continue;
+    }
+    if (c !== '{') continue;
+    if (depth > 0) {
+      depth--;
+      continue;
+    }
+    start = i + 1;
+    const header = source.slice(Math.max(floor, i - 80), i);
+    const block = /\b(?:if|for|while|switch|try|catch|else|do)\s*(?:\([^()]*\))?\s*$/.test(header);
+    const fn = /(?:function\b[^(){}]*\([^()]*\)|=>|\)\s*(?::\s*[\w<>[\].|,? ]+)?)\s*$/.test(header);
+    if (fn && !block) break;
+    if (++climbs >= 3) break;
+  }
+  return source.slice(start, index);
+}
+
+/**
+ * The expression assigned at an `x.innerHTML = …` match: from the `=` to the
+ * end of the statement, bounded, with nesting respected so a `}` inside a
+ * callback does not end it early.
+ */
+function assignedExpression(source: string, index: number, limit = 1200): string {
+  const at = /[=:]/.exec(source.slice(index, index + 40));
+  if (!at) return '';
+  const eq = index + at.index;
+  let depth = 0;
+  const end = Math.min(source.length, eq + limit);
+  for (let i = eq + 1; i < end; i++) {
+    const c = source[i]!;
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      if (depth === 0) return source.slice(eq + 1, i);
+      depth--;
+    } else if (depth === 0 && c === ';') {
+      return source.slice(eq + 1, i);
+    } else if (depth === 0 && c === '\n') {
+      // A newline ends the expression only when nothing continues it. A
+      // multi-line ternary of two string literals read as the bare condition
+      // on the first line, which looks dynamic when the value cannot be.
+      const before = source.slice(eq + 1, i).trimEnd();
+      const after = source.slice(i + 1, i + 40).trimStart();
+      const continues = /[?:+,.|&([{=-]$/.test(before) || /^[?:+.,|&)\]}]/.test(after);
+      if (!continues) return source.slice(eq + 1, i);
+    }
+  }
+  return source.slice(eq + 1, end);
+}
+
+/** Calls whose output is HTML-safe by the time it is assigned. */
+const ESCAPES_HTML =
+  /\b(?:esc|escape|htmlEsc|sanitiz|sanitis|purif|xss|encodeURI)[A-Za-z]*\s*\(|\bDOMPurify\b/i;
+
+/**
+ * Whether an expression carries anything that is not a literal.
+ *
+ * Deliberately conservative: a bare identifier counts. Proving that the string
+ * behind one is a module constant rather than a request parameter is dataflow
+ * work (what CTS084 does for model output), and a guard that assumed "bare
+ * name = safe" would drop `el.innerHTML = untrustedHtml`, which is the finding.
+ */
+function hasDynamicPart(expr: string): boolean {
+  // In `showing ? '<path …/>' : '<path …/>'` — an icon swap, and 1 of the 7
+  // findings the first HTML-reading scan produced — the condition is a name and
+  // both values are literals. Only the values reach the sink, so only they are
+  // read: a `?` that opens a conditional, never `?.` or `??`, and never one
+  // inside a string.
+  const conditional = /^[^?'"`]*\?(?![.?])/.exec(expr);
+  const body = conditional ? expr.slice(conditional[0].length) : expr;
+  // Every string literal, template literal and number taken out: what is left
+  // of `'<b>' + 'x'` is operators and whitespace, and of `'<b>' + name` is a name.
+  const rest = body
+    .replace(/`(?:[^`\\]|\\.)*`/g, ' ')
+    .replace(/'(?:[^'\\\n]|\\.)*'/g, ' ')
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, ' ')
+    .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
+    .replace(/\b(?:true|false|null|undefined)\b/g, ' ');
+  // A template literal with an interpolation is dynamic whatever is around it.
+  if (/`(?:[^`\\]|\\.)*\$\{/.test(body)) return true;
+  return /[A-Za-z_$]/.test(rest);
+}
+
+/**
+ * A `<style>` element's own text. `<style dangerouslySetInnerHTML={{ __html:
+ * css }} />` is how React injects a stylesheet, and it was 7 of the 14 real
+ * VG012 findings across the dogfooding repos — reported `high` as cross-site
+ * scripting, on the idiom this project's own README calls "a regex, not a
+ * finding" when CTS084 was written. CSS text in a style tag is not an HTML sink.
+ */
+function inStyleElement(source: string, index: number): boolean {
+  const before = source.slice(Math.max(0, index - 200), index);
+  const open = before.lastIndexOf('<');
+  return open !== -1 && /^<style\b[^<>]*$/i.test(before.slice(open));
+}
+
+/**
+ * An authorization decision — not merely an authentication one. A named guard,
+ * the caller's own role / admin flag / permission being tested, or the refusal
+ * that only an authorization check returns.
+ *
+ * Deliberately excludes a bare `auth()` / `getUser()` / 401: "any authenticated
+ * user can promote themselves" is the bug VG1008 is about, so a signed-in check
+ * alone must not clear it.
+ */
+const AUTHORIZATION_CHECK = new RegExp(
+  [
+    String.raw`\b(?:require|assert|ensure|check|verify)(?:Admin|Role|Owner|Permission|Permissions|Authori[sz]ation|Authori[sz]ed|Access)\w*\s*\(`,
+    String.raw`\b(?:hasRole|hasPermission|hasAnyRole|canAccess|isAuthorized|isAuthorised|authorize|authorise|requirePermission|checkAdmin)\s*\(`,
+    String.raw`[!(&|,]\s*[\w$.?[\]'"]*\b(?:is_?admin|isSuperAdmin|is_?owner|role|roles|permission|permissions)\b`,
+    String.raw`\b(?:is_?admin|isSuperAdmin|role|roles|permission|permissions)\b[^\n]{0,60}(?:===|!==|==|!=|\bin\b|\.includes\s*\()`,
+    String.raw`\b403\b|\bForbidden\b|\bFORBIDDEN\b|\bPERMISSION_DENIED\b`,
+  ].join('|'),
+);
+
 const MATCH_GUARDS: Record<
   string,
   (match: string, source: string, index: number, spans: readonly Span[]) => boolean
@@ -427,6 +566,40 @@ const MATCH_GUARDS: Record<
     !/\bwhere\b[\s\S]{0,200}?\b(userId|user_id|ownerId|owner_id|orgId|org_id|organizationId|tenantId|tenant_id|workspaceId|workspace_id|accountId|account_id|teamId|team_id|shop|shopDomain|storeId|store_id)\b/i.test(
       match,
     ),
+
+  // The rule's own name is "…Without Authorization Check", and its pattern
+  // contains no notion of one: it matches `.update({ is_admin: true })` and
+  // reports critical whatever sits above it. So a route that reads the caller's
+  // own admin flag, returns 403 when it is not set, and only then promotes
+  // somebody — the shape the rule's `fixCode` asks for — was reported as the
+  // bug, while CTS001 read the same function and (correctly) said nothing. Two
+  // criticals on correct code is the worst failure this project has, and the
+  // same contradiction CTS001 already settles for VG1025 above.
+  VG1008: (_match, source, index) => !AUTHORIZATION_CHECK.test(enclosingBody(source, index)),
+
+  // "XSS via innerHTML" is about untrusted data reaching the sink, and the
+  // pattern is `innerHTML\s*=\s*` with a lookahead for a quoted `<` — so
+  // anything that is not a literal starting with a tag is a high finding. This
+  // project's own landing page was the proof, the moment HTML files started
+  // being read at all: `out.innerHTML = LINES.map(l => '<span>' + esc(l[1]) +
+  // '</span>').join('\n')` — a hardcoded constant, escaped on the way in,
+  // reported as cross-site scripting. An expression with no dynamic part, or
+  // whose dynamic parts go through an escaper, is not this; `el.innerHTML = '<b>'
+  // + data.name` still is.
+  VG012: (_match, source, index) => {
+    if (inStyleElement(source, index)) return false;
+    const expr = assignedExpression(source, index);
+    if (ESCAPES_HTML.test(expr)) return false;
+    return hasDynamicPart(expr);
+  },
+
+  // Check-then-act is a race when the value checked is the value written — the
+  // credits balance of the rule's own example. An access-control gate has the
+  // same shape and is not: `select('is_admin').single()` → `if (!admin) return
+  // 403` → `update(...)` is how an admin endpoint is supposed to be written,
+  // and no amount of concurrency makes the caller an admin. Reported critical
+  // on exactly that, beside VG1008, on the same correct route.
+  VG154: (match) => !AUTHORIZATION_CHECK.test(match),
 
 };
 
@@ -2094,6 +2267,22 @@ const SEVERITY_ADJUSTERS: Record<
         },
 };
 
+/**
+ * The counts the README quotes about this ruleset, exported so the docs can be
+ * asserted against the code rather than remembered. The 2026-10-13 audit found
+ * "435 additional rules vendored" (435 is the count that *runs*; 468 are
+ * vendored) and "21 carry a match guard" (22 did) — two numbers no check read.
+ */
+export const RULE_COUNTS = {
+  vendored: GUARDVIBE_RULES.length,
+  superseded: SUPERSEDED.size,
+  withheld: WITHHELD.size,
+  guarded: Object.keys(MATCH_GUARDS).length,
+  overridden: Object.keys(PATTERN_OVERRIDES).length,
+  manifestOnly: MANIFEST_ONLY.size,
+  active: GUARDVIBE_RULES.length - SUPERSEDED.size - WITHHELD.size,
+};
+
 export const communityScanner: Scanner = {
   name: `Community ruleset (${GUARDVIBE_RULES.length - SUPERSEDED.size - WITHHELD.size} rules)`,
 
@@ -2137,7 +2326,7 @@ export const communityScanner: Scanner = {
 
       const lockfile = LOCKFILE.test(relPath);
       const spans = lexLarge(source, commentStyleFor(languages));
-      const suppress = new Suppressions(source);
+      const suppress = new Suppressions(source, relPath);
       const lines = new LineIndex(source);
       filesScanned++;
 

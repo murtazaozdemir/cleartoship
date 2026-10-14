@@ -188,6 +188,7 @@ export function renderJson(scan: FullScan): string {
       gitIgnoredCount: scan.gitIgnoredCount,
       escapingSymlinkCount: scan.escapingSymlinkCount,
       oversizeCount: scan.oversizeCount,
+      generatedCount: scan.generatedCount ?? 0,
       skippedDirs: scan.skippedDirs,
       unreadable: scan.unreadable ?? [],
       durationMs: scan.durationMs,

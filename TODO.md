@@ -209,12 +209,127 @@ enrichment, stay critical and are pinned by tests. **Verified:** 205 → 238
 tests; before/after on 11 real repos differs only by BizDataly's 11 removed
 false criticals, with scan times unchanged.
 
+**The 2026-10-13 full audit: eleven defects, and the worst class was again a
+file or a rule that was never read at all.** Four of them were silent coverage holes,
+every one reachable by naming a file. `looksGenerated` skips machine-generated
+code on purpose — a Prisma client ships its own credentials and its own
+`queryRawUnsafe` — and it skipped it *silently*: `app/actions/admin.gen.ts` and
+`src/generated/client/admin.ts`, byte-identical to an `app/actions/admin.ts`
+reported critical beside them, were left out of a 🟢 report that named neither.
+There is a `Generated files skipped (n)` line now that names them, passing like
+the skipped build directories rather than incomplete, since making it
+incomplete would fail every Prisma project's CI. **HTML was not read at all**:
+`.html` was not in `SCAN_EXTS`, so a `public/index.html` with a Supabase
+service-role JWT and an `sk_live_` key in an inline `<script>` produced nothing
+and said nothing — and this project's own self-scan has listed `site` since
+0.13.5 while opening none of its four landing pages. **Five vendored rules
+could never match any file**: VG517/518/520 are registered for `toml` and
+VG750/753 for `firestore`, and `languagesFor` answered neither, so `.toml` files
+were read by the walk and then skipped by the community scanner for having no
+language, and no `.rules` file was read at all — all five counted as active in
+the rule count the report prints, two of them critical. A test now asserts that
+no vendored rule's language set is unreachable, and `firestore.rules` /
+`storage.rules` make a repository a Firebase one, because the two rules that
+read them are otherwise skipped as "not a Firebase project".
+
+**Then four rules reporting on correct code, two of them critical.** A route
+that calls `auth()`, returns 401, reads the caller's own `is_admin`, returns 403
+and only then promotes somebody — the shape VG1008's own `fixCode` asks for —
+got **two criticals**: VG1008, whose name is "Admin Role Elevation Without
+Authorization Check" and whose pattern contains no notion of one, and VG154,
+because an access-control gate has the same read-check-write shape as a credits
+race. CTS001 read the same function and correctly said nothing, so the report
+contradicted itself and would have failed the user's build at the default
+`--fail-on=critical`. Both are guarded now, on VG1025's precedent; upstream's own
+benchmark has a test named *"skips when requireAdmin guard is present"* that the
+rule failed, and it passes. VG012 ("XSS via innerHTML") fired on 17 of 23 real
+sites across eleven repositories: ten were `<style dangerouslySetInnerHTML={{
+__html: css }}>` (shadcn's own `chart.tsx` among them), others a concatenation of
+nothing but string literals, a value already through `sanitizeHTML` / `escHtml` /
+DOMPurify — including guardvibe's own `fixCode` string demonstrating the fix —
+and `showing ? '<path …/>' : '<path …/>'`, whose condition is a name and whose
+two values cannot be anything else. A `<style>` element's CSS text, an
+all-literal expression and one passed through an escaper are not HTML sinks; a
+bare identifier still is, because proving that `userHtml` holds a module
+constant is dataflow, and assuming it would drop the finding. VG999 duplicated
+CTS081 line for line (13 times in the sweep) and is superseded.
+
+**And two rules that described a different problem than the one they found.**
+CTS012 told an always-true INSERT policy that "any signed-up user can overwrite
+or delete every other user's rows" — an INSERT policy cannot, PostgreSQL needs
+an UPDATE or DELETE policy for that. It is split per command now: critical when
+anon-facing, or when an ownership column means the caller can attribute the row
+to somebody else, and high for an append-only table with no such column, which
+is the common correct shape of exactly that policy. CTS050 reported a widening
+between two policies whose predicates are the same text — StorageVisual's
+`uploads_own_prefix_insert` and `uploads_user_folder_insert`, identical `with
+check`, one superseding the other across migrations — when the OR of a predicate
+with itself is that predicate; it was also comparing clauses PostgreSQL does not
+apply to the command in hand (a `FOR ALL` policy's `WITH CHECK` under SELECT).
+The last two defects were quieter: every scanner built `Suppressions` from the
+source alone, though the class takes the file path and its own comment says
+scanners pass it — so the per-language path was dead outside its unit tests and
+every check ran the fallback, where `//`, `#` and `--` all open a comment
+whatever the file is, and `curl https://x cts-ignore` in a shell script
+suppressed that line. All six call sites pass the path, and `commentStyleFor`
+learned JSON-with-comments, TOML and HCL, which `secrets.ts` had been
+compensating for on its own. Finally two README counts were wrong — "435
+additional rules vendored" is the count that *runs* (468 are vendored, and the
+same README's own per-category table counts all 468) and "21 carry a match
+guard" was 22 — so `RULE_COUNTS` is exported and a test asserts the prose
+against the code, the same move `check-version-pins.sh` makes for versions.
+
+**The eleventh was the registry answering in a way that looks healthy**, which
+is the failure the release skill opens with, in the one place it had not been
+looked for. npm serves **HTTP 200** for a fully unpublished name — the packument
+carries `time.unpublished` and an empty `versions` map — and `lookupNpm` read
+the status rather than the content: `exists: true`, zero versions, and
+`time.created` then made it *recent*, so the verdict was CTS021, "newly
+published, barely used". The example is this project's own name, unpublished
+2026-09-03, which is how the audit found it: scanning `README.md` on its own
+reported the sentence that warns people off installing `cleartoship` as a
+barely-used dependency of this repository. The truth is CTS027, critical, and it
+already existed — an install of such a name fails, and the name is free for
+anyone to claim and inherit the installs that still ask for it. The 404-plus-
+traffic path had always said so; the 200 path never reached it. (The full
+self-scan was never affected: `package.json` declares the name, so it is "defined
+by this repository itself, so not looked up" — verified again with a cold cache.)
+
+**Verification:** 238 → 252 tests; 12 of the 14 new ones fail against the
+pre-fix build, and the other two are the true positives each fix had to keep
+(VG1008 on an ungated `update({ is_admin: true })`, VG154 on the credits race). Before/after over eleven real repositories (aistoreaudit,
+BizDataly, Cherrly, AppVitrine, StorageVisual, datavot, SysXray, guardvibe,
+splinter, dep-hallucinator, gitleaks): −17 VG012, −13 VG999, −1 VG1008, −1
+CTS050, +6 VG012 on SysXray's HTML dashboards, which are newly read and really
+do write `innerHTML=cpuTopHtml` built by concatenating scan data. **Every
+removal was verified by reading the code it fired on**, and 2,291 → 2,313 files
+scanned with the times unchanged. That sweep ran `--offline`, so the registry
+fix is covered by a test that stubs `fetch` and asserts the facts rather than by
+the corpus. The self-scan went 64 → 68 files — it reads
+the landing pages now — and stayed 🟢 on the same five lows, after the first
+HTML-reading run reported a `high` on `site/public/index.html`'s own
+`innerHTML`, which was the escaped-constant false positive above. Not released
+yet: these are on `main` and ship with the next tag.
+
 ## Open
 
 - [ ] **Maintainer-only settings the audit turned up** (not doable from the
       repo): **enable immutable releases** (release.yml publishes via a draft,
       so it is compatible), **delete the dead `NPM_TOKEN` secret**, and add a
       **Cloudflare rate-limit rule** on `/license/*` and `/webhooks/*`.
+- [ ] **Found in the 2026-10-13 audit, deliberately not fixed yet.** CTS004
+      ("authenticated but not owner-scoped", medium) says "any logged-in user can
+      pass another tenant's id" about a route gated on `requireAdmin()`, where
+      acting on someone else's row is the point. Fixing it properly needs the
+      auth model to distinguish *authorization* from *authentication*, not a
+      vocabulary match — a name list in this exact area has already hidden two
+      real bugs — so it is recorded rather than patched. VG1008 still reports
+      alongside CTS001 on an ungated admin write (same line, two criticals);
+      kept because it also covers the authenticated-but-not-admin case CTS001
+      rates lower. VG012 cannot prove `safeHtml` or `buildHTML()` is sanitised,
+      so those stay reported. And an HTML file is read for credentials and by the
+      7 HTML-language vendored rules, not by the JS AST scanners: an inline
+      `<script>` in a `.html` is not analysed for CTS001/CTS070/CTS080-085.
 - [ ] **Known limits still open after 0.13.13.** SQL inside a `DO $$ … $$`
       block is not parsed, so policies created there are invisible (a false
       CTS014 on StorageVisual's `forum_comment_likes`). A gate-only SELECT

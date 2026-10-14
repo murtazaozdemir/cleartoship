@@ -754,9 +754,12 @@ export const dependencyScanner: Scanner = {
           severity: 'critical',
           title: 'Dependency was unpublished and its name is open to takeover',
           detail:
-            `\`${d.name}\` is ${origin} but no longer exists on ${registryName}, yet it still records ` +
-            `${f.weeklyDownloads} weekly downloads. It was published and then withdrawn, so the name is ` +
-            'free for anyone to claim — and whoever claims it inherits every one of those installs.',
+            `\`${d.name}\` is ${origin} but has no versions left on ${registryName}` +
+            (f.weeklyDownloads
+              ? `, yet it still records ${f.weeklyDownloads} weekly downloads`
+              : ' (the registry still answers for the name, with an empty version list)') +
+            '. It was published and then withdrawn, so the name is free for anyone to claim — and ' +
+            'whoever claims it inherits every install that still asks for it.',
           fix:
             `Remove \`${d.name}\` and replace it with a maintained package. Your install is already ` +
             'failing or falling back to a cache; the risk is the day someone republishes the name.',

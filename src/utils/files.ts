@@ -28,6 +28,11 @@ const SKIP_DIRS = new Set([
 const SCAN_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.sql',
   '.json', '.txt', '.toml', '.env', '.yaml', '.yml',
+  // A static page is shipped source like any other: a `public/index.html` with
+  // a Supabase service-role key in an inline `<script>` was read by nothing and
+  // counted nowhere, and this project's own landing pages were in the
+  // self-scan's argument list while no HTML file was ever opened.
+  '.html', '.htm',
   // Prose files matter: AI agents copy `npm install <hallucination>` out of
   // READMEs and agent instruction files long before it reaches a manifest.
   '.md', '.mdc', '.mdx',
@@ -37,7 +42,13 @@ const SCAN_EXTS = new Set([
 ]);
 
 /** Extensionless files worth reading. */
-const NAMED_FILES = new Set(['Dockerfile', 'Makefile', 'Procfile']);
+const NAMED_FILES = new Set([
+  'Dockerfile', 'Makefile', 'Procfile',
+  // Firebase security rules: the two vendored rules that read them (VG750,
+  // VG753 — `allow read, write: if true`) could never match, because nothing
+  // read a `.rules` file and `languagesFor` never answered `firestore`.
+  'firestore.rules', 'storage.rules', 'database.rules.json',
+]);
 
 /** Instruction files read by coding agents. No extension, but high signal. */
 const AGENT_FILES = new Set([
@@ -97,6 +108,15 @@ export interface WalkResult {
   oversize: number;
   /** The files counted in `oversize`, absolute paths. */
   oversizeFiles: string[];
+  /**
+   * How many files were left unread for looking generated (`looksGenerated`).
+   * Counted and named for the same reason as `oversize` and `skippedDirs`: the
+   * skip was silent, so a file called `app/actions/admin.gen.ts` — or anything
+   * under `generated/client/` — produced no findings and no line saying why.
+   */
+  generated: number;
+  /** The files counted in `generated`, absolute paths. */
+  generatedFiles: string[];
   /** Names of the build/dependency directories skipped whole, deduplicated. */
   skippedDirs: string[];
   /**
@@ -214,6 +234,8 @@ export function walk(
   // must never be silently indistinguishable from "nothing was wrong".
   let oversize = 0;
   const oversizeFiles: string[] = [];
+  let generated = 0;
+  const generatedFiles: string[] = [];
   const skippedDirs = new Set<string>();
 
   visited.add(rootReal);
@@ -264,7 +286,12 @@ export function walk(
       unreadable.push(full);
       return;
     }
-    if (!looksGenerated(full)) found.push(full);
+    if (looksGenerated(full)) {
+      generated++;
+      generatedFiles.push(full);
+      return;
+    }
+    found.push(full);
   };
 
   // `cleartoship path/to/one/file.ts` names a file, which the CLI documents and
@@ -285,6 +312,8 @@ export function walk(
       escapingSymlinks,
       oversize,
       oversizeFiles,
+      generated,
+      generatedFiles,
       skippedDirs: [],
       unreadable,
       warnings,
@@ -360,6 +389,8 @@ export function walk(
     escapingSymlinks,
     oversize,
     oversizeFiles: oversizeFiles.sort(),
+    generated,
+    generatedFiles: generatedFiles.sort(),
     skippedDirs: [...skippedDirs].sort(),
     unreadable: unreadable.sort(),
     warnings,
@@ -450,6 +481,8 @@ export function languagesFor(file: string): string[] {
   const base = file.slice(file.lastIndexOf('/') + 1);
   const ext = base.includes('.') ? base.slice(base.lastIndexOf('.')) : '';
   if (base.startsWith('Dockerfile')) return ['dockerfile'];
+  if (base === 'render.yaml' || base === 'render.yml') return ['yaml', 'render-config'];
+  if (/^docker-compose(\.[\w-]+)?\.ya?ml$/.test(base)) return ['yaml', 'docker-compose'];
   switch (ext) {
     case '.ts':
     case '.tsx':
@@ -462,7 +495,22 @@ export function languagesFor(file: string): string[] {
     case '.cjs':
       return ['javascript'];
     case '.json':
-      return base === 'vercel.json' ? ['json', 'vercel-config'] : ['json'];
+      if (base === 'vercel.json') return ['json', 'vercel-config'];
+      if (base === 'database.rules.json') return ['json', 'firestore'];
+      return ['json'];
+    case '.html':
+    case '.htm':
+      return ['html'];
+    case '.toml':
+      // The TOML rules (VG517/518/520 — `[env] SECRET=…`, an exposed database
+      // port, `force_https = false`) were vendored, counted as active and could
+      // never run: `.toml` files are read by the walk, and this returned nothing
+      // for them, which makes the community scanner skip the file whole.
+      if (base === 'fly.toml') return ['toml', 'fly-config'];
+      if (base === 'netlify.toml') return ['toml', 'netlify-config'];
+      return ['toml'];
+    case '.rules':
+      return ['firestore'];
     case '.sql':
       return ['sql'];
     case '.yml':

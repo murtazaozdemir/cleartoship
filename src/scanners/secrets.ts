@@ -402,7 +402,7 @@ export const secretsScanner: Scanner = {
       const isExample = /\.(example|sample|template)$/.test(relPath) || /\.env\.example/.test(relPath);
       const fixtureFile = NON_PRODUCTION_PATH.test(relPath);
       filesScanned++;
-      const suppress = new Suppressions(source);
+      const suppress = new Suppressions(source, relPath);
       const clientComponent = /^\s*(['"])use client\1/m.test(source.slice(0, 400));
       const lines = new LineIndex(source);
       const openers = commentOpenersFor(file);
