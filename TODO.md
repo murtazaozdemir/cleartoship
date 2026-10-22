@@ -491,7 +491,17 @@ release ships both.
       `examples/*.yml`, `site/public/*.html`), let CI go green on `main`, then
       tag — and verify the artifact, not the step, per
       `.claude/skills/cleartoship-release`.
-- [ ] **Three things the audit noticed and did not act on.** 8 vendored rules
+- [ ] **Where the 2026-10-21 audit did not look — scope for the next one.**
+      That pass went where the yield was (the walk/read layer, the dependency
+      collectors, the vendored-rule guards, corpus triage of every critical on
+      the seven real apps plus sampled removals on the fixture repos). It did
+      NOT re-read `report.ts`'s five renderers beyond a skim, the
+      `server-actions.ts` / `auth-helpers.ts` pair, the site Worker, or
+      `action.yml` and the workflows — all last audited 2026-10-13 or
+      2026-09-23 — and it triaged highs only where a critical led there, so
+      the ~180 corpus highs (BizDataly 59, StorageVisual 45, datavot 39) have
+      never had the read-the-code pass the criticals got. The next audit
+      should start from one of those rather than re-walking this one's ground.
       carry an `API:`-prefixed OWASP label (the API Security Top 10, a
       different list) that the README's OWASP table does not mention, so those
       rules' category reads as unmapped. Now that `site/public` HTML is
