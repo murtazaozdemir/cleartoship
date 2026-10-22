@@ -6,6 +6,7 @@ import {
 // Not re-exported through internal.ts; sql.ts has no imports of its own, so
 // reaching it directly cannot introduce an initialisation-order cycle.
 import { readBalanced } from '../utils/sql.js';
+import { adjustForPath } from '../utils/paths.js';
 import type { Finding, ProjectContext, ScanResult, Scanner, Severity } from '../internal.js';
 import { existsSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, isAbsolute } from 'node:path';
@@ -538,6 +539,20 @@ export const rlsScanner: Scanner = {
       if (sup && f.line && sup.suppressed(f.line, f.id)) continue;
       const src = f.file ? sources.get(f.file) : undefined;
       if (src && f.line) f.snippet = snippetAt(src, f.line);
+      // Placed like every other scanner's findings (community, logic, agent
+      // all do this; RLS never did): a lint fixture named
+      // `test/sql/0013_rls_disabled_in_public.sql` holds SQL that is *about*
+      // the defect, deliberately, and was reported as eighteen criticals —
+      // a HOLD on a repository whose test data is doing its job. Migrations
+      // are untouched: `migrations/` is deliberately absent from the path
+      // classes, because migrations are the production schema.
+      if (f.file) {
+        const placed = adjustForPath(f.severity, f.file);
+        if (placed.severity !== f.severity) {
+          f.severity = placed.severity;
+          f.detail += placed.note;
+        }
+      }
       result.findings.push(f);
     }
 

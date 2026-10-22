@@ -4,7 +4,7 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
-  Gitignore, extendedAt, repositoryExcludes, readGitIndex, isTracked, readBounded,
+  Gitignore, extendedAt, repositoryExcludes, readGitIndex, isTracked, readBounded, decodeText,
 } from './gitignore.js';
 import type { IndexLookup, TrackedPaths } from './gitignore.js';
 
@@ -33,6 +33,12 @@ const SCAN_EXTS = new Set([
   // counted nowhere, and this project's own landing pages were in the
   // self-scan's argument list while no HTML file was ever opened.
   '.html', '.htm',
+  // Single-file components are where a Svelte, Vue or Astro app keeps most of
+  // its code — and none of them was read at all: a `sk_live_` key that was a
+  // critical in the `.ts` file beside them produced nothing in any of the
+  // three. SKIP_DIRS already names `.svelte-kit` and `.nuxt`, so these users
+  // were always expected; their source files were not.
+  '.svelte', '.vue', '.astro',
   // Prose files matter: AI agents copy `npm install <hallucination>` out of
   // READMEs and agent instruction files long before it reaches a manifest.
   '.md', '.mdc', '.mdx',
@@ -368,6 +374,41 @@ export function walk(
           const ruledOut = frame.ignoredButTracked || rules.ignores(full, true);
           if (ruledOut && !holdsTracked) {
             gitIgnored++;
+            // SCAN_EVEN_IF_IGNORED promises that an ignored `.env` is still
+            // read — but a `.env` whose *parent directory* is the thing the
+            // rules ignore never reached that check, because the walk did not
+            // descend. One shallow listing per skipped directory keeps the
+            // promise for `config/.env` at the cost of a readdir; `.env` files
+            // nested deeper inside an ignored tree are still not seen.
+            let names: string[] = [];
+            try {
+              names = readdirSync(full);
+            } catch {
+              /* unlistable: nothing to peek at */
+            }
+            for (const name of names) {
+              if (!name.startsWith('.env')) continue;
+              const child = join(full, name);
+              if (!SCAN_EVEN_IF_IGNORED.test(child)) continue;
+              let cst;
+              try {
+                cst = statSync(child);
+              } catch {
+                continue;
+              }
+              if (!cst.isFile()) continue;
+              let creal: string;
+              try {
+                creal = realpathSync(child);
+              } catch {
+                continue;
+              }
+              if (!insideRoot(creal)) {
+                escapingSymlinks++;
+                continue;
+              }
+              consider(child, name, cst.size, frame);
+            }
             continue;
           }
           if (ruledOut) ignoredButTracked = true;
@@ -429,7 +470,10 @@ export function safeRead(root: string, relPath: string, maxBytes: number = MAX_F
 
 export function read(file: string): string | null {
   try {
-    return readFileSync(file, 'utf8');
+    // Decoded via the BOM-aware decoder, not `utf8` outright: a UTF-16 file
+    // (PowerShell's default for redirected output) decoded as UTF-8 is
+    // NUL-riddled mojibake that no scanner can match — scanned in name only.
+    return decodeText(readFileSync(file));
   } catch {
     return null;
   }
@@ -500,6 +544,17 @@ export function languagesFor(file: string): string[] {
       return ['json'];
     case '.html':
     case '.htm':
+      return ['html'];
+    // Single-file components are an HTML-shaped document with script blocks:
+    // the html rules (inline handlers, script-in-markup sinks) are the ones
+    // whose premise holds there. The JS regex rules are not applied — template
+    // syntax (`{#if}`, `v-if`, `{expr}`) is not JavaScript, and a rule firing
+    // on a template expression would be a finding about code that never runs
+    // as written. The AST scanners skip them for the same reason they skip
+    // inline <script> in .html, which the docs record as a known limit.
+    case '.svelte':
+    case '.vue':
+    case '.astro':
       return ['html'];
     case '.toml':
       // The TOML rules (VG517/518/520 — `[env] SECRET=…`, an exposed database

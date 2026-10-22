@@ -313,6 +313,91 @@ HTML-reading run reported a `high` on `site/public/index.html`'s own
 yet: the work sits on the branch `audit-2026-10-13`, unpushed, and reaches
 users only once it is merged and a tag ships it.
 
+**The 2026-10-21 full audit: the same two failure classes, one layer further
+out — text the scanner decoded into mojibake, and ecosystems whose conventions
+it did not know.** Every read in the tool was `utf8`, so a UTF-16LE `.env` —
+what PowerShell's `>` redirect writes — decoded to NUL-riddled garbage no
+pattern can match, counted as scanned, and said nothing; and a UTF-8 BOM in
+front of `package.json` made `JSON.parse` throw inside collectors that swallow
+the error, which switched off the entire dependency surface — hallucination,
+typosquat, CVE and install-hook checks — while the report said "no dependencies
+declared", passed, complete. Every read now goes through one BOM-aware decoder
+(UTF-16LE/BE decoded, UTF-8 BOM stripped), and a manifest that exists but
+cannot be parsed makes the run incomplete rather than clean. The other
+never-read files: `.svelte`, `.vue` and `.astro` were not in `SCAN_EXTS` at all
+— `SKIP_DIRS` has named `.svelte-kit` and `.nuxt` since it existed, so those
+users were always expected while every line of their components went unread;
+the same `sk_live_` key that was a critical in a `.ts` file produced nothing in
+all three. They are read now as the HTML-shaped documents they are (secrets
+plus the 7 html rules; the AST scanners skip them like inline `<script>` in
+`.html`, the same documented limit). A `.env` whose *parent directory* is
+gitignored was never reached although `SCAN_EVEN_IF_IGNORED` exists for exactly
+ignored `.env` files — the walk now peeks one level into each directory the
+ignore rules skip. And the manifests the tool read but asked nothing about:
+`requirements-dev.txt` and `requirements/*.txt` were never collected (only the
+exact name was), `[tool.poetry.group.*.dependencies]` and PEP 735
+`[dependency-groups]` never matched the pyproject parser, and pnpm v9's quoted
+scoped entries (`'@babel/core@7.24.0':`) resolved to nothing, so OSV was asked
+about range floors instead of the versions actually installed.
+
+**Rules on correct code, the sweep's second half.** The biggest cluster was
+VG010/VG123 ("SQL injection"): three criticals on a QuickBooks integration
+whose query strings are QBQL sent URL-encoded to Intuit's HTTP API —
+`MAXRESULTS`/`STARTPOSITION` are keywords no SQL driver parses, and that API
+has no parameterized form to recommend instead; two more on
+`PRAGMA table_info(${quoteIdent(table)})`, where the interpolation *is* the
+escaping — credited now when every hole is a SQL quoting call, with HTML
+escapers deliberately excluded and bare identifiers still reported, the line
+VG012 drew; and two on a rule-definition file's own `description:` strings,
+cleared by refusing matches that sit inside a string literal. VG123 duplicated
+VG010 on all 24 of its findings — upstream's own tests call VG010 "the concat
+rule (which dedup-takes-over)" — and is superseded. VG001/VG062 ("hardcoded
+credentials") reported a redaction helper's own replacement string
+(`password="[REDACTED]"`), a docs sample whose body is `1234567890abcdef`
+twice, a value ending in the ellipsis its author cut it with, and — on a login
+route — `DUMMY_PASSWORD_HASH = '$2b$12$…'`, the standard timing-equalization
+idiom: a PHC-format hash is a verifier, not a credential anyone can present.
+VG060 ("weak *password* hashing") fired on `hashlib.md5(hostname + mac)`
+deriving a stable device id; it now requires a password within sight of the
+call. VG154 ("check-then-act race") hit four times, none a race worth the
+word: count-based rate limiters that reject at the limit and append the row
+being counted (overshoot bounded by in-flight requests is the accepted
+property of every soft limiter), and pages that count one table and save
+another, which is load-then-save. Same table with an update — the credits
+race — stays reported, pinned by the 0.13.13 test. And an `sk-ant-…` key was
+reported twice on its line, once correctly and once as "Hardcoded OpenAI API
+key", because the OpenAI pattern had no exclusion in front of 24 free-form
+characters.
+
+**Third: test conventions from outside the JavaScript world.** `_test.go`,
+`testdata/`, `test_*.py` and `conftest.py` were in neither of the two
+non-production path definitions (secrets.ts's and paths.ts's — which had
+drifted identically, the cost of one idea living in two places), so 187 of
+gitleaks' own fixture keys were criticals while the identical string in a
+`.test.ts` would have been low. Both lists know them now. And the RLS scanner
+never placed findings by path at all, though community, logic and agent all
+do: supabase/splinter's `test/sql/` lint fixtures — SQL whose *job* is to
+contain the defect — carried 18 criticals and a HOLD verdict; they are low
+with a stated reason now, and splinter scans CLEAR. `migrations/` remains
+deliberately absent from the path classes: migrations are the production
+schema.
+
+**Verification:** 252 → 274 tests; 18 of the 20 behavioural tests fail against
+the pre-fix build, and the two that pass are the keep-cases each fix had to
+preserve (VG010 on a bare interpolated identifier, VG001 on an opaque value
+under a credential name). Before/after over the same eleven repositories:
+2,159 → 2,067 findings, criticals 401 → 151, **zero findings added**, and
+every removal read: −24 VG123 (each a duplicate of a VG010 on the same line,
+which stays), −28 VG010, −13 VG001, −10 VG062, −4 VG154, −4 VG060, with 187
+CTS030 and 18 splinter RLS findings demoted to low on test paths. splinter
+went HOLD → CLEAR, dep-hallucinator HOLD → CONDITIONAL; what stays is real or
+honestly undecidable — gitleaks' `cmd/generate` keys are realistic by
+construction, and BizDataly's one remaining VG010 interpolates variables whose
+QBQL markers the match cannot see, the bare-identifier line again. Self-scan
+🟢 on the same five lows, 68 files. Not released: the work sits on
+`audit-2026-10-21`, stacked on the unreleased `audit-2026-10-13`; one 0.13.14
+release ships both.
+
 ## Open
 
 - [ ] **Maintainer-only settings the audit turned up** (not doable from the
@@ -332,6 +417,9 @@ users only once it is merged and a tag ships it.
       so those stay reported. And an HTML file is read for credentials and by the
       7 HTML-language vendored rules, not by the JS AST scanners: an inline
       `<script>` in a `.html` is not analysed for CTS001/CTS070/CTS080-085.
+      Since 2026-10-21 the same applies to `.svelte` / `.vue` / `.astro`
+      single-file components: read for secrets and the html rules, their
+      script blocks not AST-analysed.
 - [ ] **Known limits still open after 0.13.13.** SQL inside a `DO $$ … $$`
       block is not parsed, so policies created there are invisible (a false
       CTS014 on StorageVisual's `forum_comment_likes`). A gate-only SELECT
@@ -391,16 +479,18 @@ users only once it is merged and a tag ships it.
       already exists to fix. Needs the same read-the-code treatment the other
       rules got; hasn't started.
 
-- [ ] **The 2026-10-13 audit is not released.** Eleven fixes are committed on
-      the branch `audit-2026-10-13` (`4e1d149`), nothing pushed, `main`
-      untouched. They change scanner behaviour — rules that fired on correct
-      code now stay quiet, four classes of file and five vendored rules are
-      read for the first time — so nobody gets them until the branch is merged
-      and a `v*` tag ships it. Cutting it means 0.13.14: bump `package.json`
-      and the two root `version` fields in `package-lock.json`, update the
-      version literals the pin script checks (`README.md`, `examples/*.yml`,
-      `site/public/*.html`), let CI go green on `main`, then tag — and verify
-      the artifact, not the step, per `.claude/skills/cleartoship-release`.
+- [ ] **Two audits are not released.** The 2026-10-13 fixes sit on
+      `audit-2026-10-13` (`4e1d149`), and the 2026-10-21 fixes on
+      `audit-2026-10-21`, stacked on it; nothing pushed, `main` untouched. Both
+      change scanner behaviour — rules that fired on correct code now stay
+      quiet, whole classes of file (HTML, TOML, `.rules`, SFCs, UTF-16) are
+      read for the first time — so nobody gets any of it until the branches are
+      merged and a `v*` tag ships them. Cutting it means 0.13.14: bump
+      `package.json` and the two root `version` fields in `package-lock.json`,
+      update the version literals the pin script checks (`README.md`,
+      `examples/*.yml`, `site/public/*.html`), let CI go green on `main`, then
+      tag — and verify the artifact, not the step, per
+      `.claude/skills/cleartoship-release`.
 - [ ] **Three things the audit noticed and did not act on.** 8 vendored rules
       carry an `API:`-prefixed OWASP label (the API Security Top 10, a
       different list) that the README's OWASP table does not mention, so those
@@ -413,6 +503,25 @@ users only once it is merged and a tag ships it.
       ask whether a key is valid); the mitigation is the Cloudflare rate-limit
       rule already listed in the maintainer-settings item above, not a code
       change.
+- [ ] **Noticed in the 2026-10-21 audit, deliberately not acted on.**
+      `bun.lock` / `bun.lockb` and `uv.lock` are not read by `resolveVersions`,
+      so bun- and uv-only projects have their OSV queries made with range
+      floors rather than installed versions — checked, but imprecise. A `.env`
+      nested *deeper* than one level inside a gitignored directory is still
+      never read (the peek is one `readdir` per skipped directory, by design).
+      A UTF-16 file *without* a BOM still decodes as mojibake — PowerShell
+      writes the BOM, so the no-BOM case was left. The non-production path idea
+      lives in two places (`secrets.ts` `NON_PRODUCTION_PATH` and `paths.ts`
+      `NON_PRODUCTION`) and they drifted identically once already; folding
+      secrets onto `pathClass()` changes which secrets findings get demoted
+      (paths.ts accepts affixed names like `transfer-tests/`), so it needs its
+      own read-the-removals pass, not a refactor commit. `meta.resolvedFrom`
+      on CTS024 always says `lockfile-or-range` — the ternary that was meant to
+      distinguish them is decided after the lookup it reports on. And
+      gitleaks' `cmd/generate/config/rules/*.go` keeps ~90 criticals: those
+      sample keys are realistic by construction (that is their job), no path
+      convention marks them, and a scanner that special-cases one repo's layout
+      is shaping itself around its corpus.
 - [ ] **Six new VG012 findings on SysXray, nothing written down yet.** The
       sweep read SysXray's HTML dashboards for the first time and they really
       do assign `innerHTML` from strings concatenated out of scan data

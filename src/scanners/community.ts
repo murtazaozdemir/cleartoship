@@ -69,6 +69,14 @@ const SUPERSEDED = new Map<string, string>([
   // omission. A model call in a build script with no ceiling is not a bill
   // anyone else can run up.
   ['VG999', 'CTS081'], // LLM & agent suite
+  // Every callee VG123 names (`query`, `execute`, `prepare`, `db.run`…) is in
+  // VG010's own verb list, followed by the same backtick-plus-`${` shape, so the
+  // two reported the same line twice across the sweep (24 of 24 VG123 findings).
+  // Upstream agrees — its own test comments call VG010 "the concat rule (which
+  // dedup-takes-over)". What VG123 added beyond the duplicates was only the
+  // matches VG010's guard had dropped for not being SQL at all
+  // (`querySelectorAll`-class verbs with no SQL keyword in the statement).
+  ['VG123', 'VG010'],
 ]);
 
 /**
@@ -153,6 +161,18 @@ function looksLikeSecretValue(match: string): boolean {
   if (trimmed === '' || PLACEHOLDER.test(trimmed)) return false;
   if (trimmed.split(/\s+/).length >= 3) return false;
   if (/[.!?]$/.test(trimmed) && trimmed.includes(' ')) return false;
+  // `password="[REDACTED]"` is what a log *sanitizer* writes — this fired on
+  // the replacement string of a redaction helper, reported critical.
+  if (/^\[[^\[\]]+\]$/.test(trimmed)) return false;
+  if (/\b(?:REDACTED|MASKED|FILTERED|SANITIZED|CENSORED)\b/.test(trimmed)) return false;
+  // A password hash is a verifier, not a credential: presenting it does not
+  // authenticate anybody. `DUMMY_PASSWORD_HASH = '$2b$12$…'` — the standard
+  // timing-equalization idiom on a login route — was a critical.
+  if (/^\$(?:2[abxy]?\$\d{1,2}\$|argon2(?:id|i|d)?\$|scrypt\$|pbkdf2)/.test(trimmed)) return false;
+  // Documentation samples: a token whose body is the keyboard walk
+  // `1234567890abcdef`, or that ends in an ellipsis because the author cut it.
+  if (/1234567890abcdef/i.test(trimmed)) return false;
+  if (/(?:\.\.\.|…)$/.test(trimmed)) return false;
   return true;
 }
 
@@ -208,10 +228,73 @@ function isParameterized(statement: string): boolean {
   return BIND_PLACEHOLDER.test(statement.replace(/\$\{[^}]*\}/g, ' '));
 }
 
+/**
+ * The template literal a SQL match points into: its constant text with every
+ * `${…}` hole blanked, and each hole's own expression. Null when no template
+ * starts near the match or it does not close within the bound.
+ */
+function templateParts(source: string, index: number): { text: string; holes: string[] } | null {
+  const open = source.indexOf('`', index);
+  if (open === -1 || open - index > 160) return null;
+  let text = '';
+  const holes: string[] = [];
+  for (let i = open + 1; i < source.length && i < open + 2000; i++) {
+    const ch = source[i]!;
+    if (ch === '\\') {
+      text += ' ';
+      i++;
+      continue;
+    }
+    if (ch === '`') return { text, holes };
+    if (ch === '$' && source[i + 1] === '{') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < source.length && j < i + 600 && depth > 0; j++) {
+        if (source[j] === '{') depth++;
+        else if (source[j] === '}') depth--;
+      }
+      holes.push(source.slice(i + 2, j - 1));
+      text += ' ';
+      i = j - 1;
+      continue;
+    }
+    text += ch;
+  }
+  return null;
+}
+
+/**
+ * An interpolation that is itself a call to a SQL quoting helper —
+ * `${quoteIdent(table)}`, `${escapeId(col)}`, `${mysql.escape(v)}` — is the
+ * escaping the rule asks for, written inline where the guard can see it. The
+ * HTML/URL escapers are excluded: `escapeHtml(v)` in a SQL string is still the
+ * bug. A bare identifier that merely *holds* a quoted value stays reported,
+ * because proving that is dataflow — the same line VG012 draws.
+ */
+const SQL_QUOTE_CALL = /^[\w$.]*(?:quote|escape|esc)[\w$]*\s*\(/i;
+const NOT_SQL_ESCAPER = /html|xml|attr|ur[il]|regex/i;
+
 /** The verb has to be a SQL verb, and the statement must not be parameterized. */
 function sqlGuard(match: string, source: string, index: number): boolean {
   const verb = /^[A-Za-z_]+/.exec(match)?.[0] ?? '';
   if (!SQL_VERBS.test(verb) && !SQL_KEYWORDS.test(match)) return false;
+  const tpl = templateParts(source, index);
+  if (tpl) {
+    // MAXRESULTS and STARTPOSITION are QuickBooks Query Language, which exists
+    // only as a URL parameter to Intuit's HTTP API: no SQL driver ever parses
+    // this string, and that API has no parameterized form to recommend. Three
+    // criticals titled "SQL injection" on a QuickBooks integration's queries.
+    if (/\b(?:MAXRESULTS|STARTPOSITION)\b/.test(tpl.text)) return false;
+    if (
+      tpl.holes.length > 0 &&
+      tpl.holes.every((h) => {
+        const hole = h.trim();
+        return SQL_QUOTE_CALL.test(hole) && !NOT_SQL_ESCAPER.test(hole);
+      })
+    ) {
+      return false;
+    }
+  }
   return !isParameterized(statementAround(source, index));
 }
 
@@ -453,8 +536,11 @@ const MATCH_GUARDS: Record<
   // injection. Held to two conditions, so a query that binds one value and
   // concatenates another still fires: there must be a placeholder, and no
   // interpolated expression may read from the request.
-  VG010: (match, source, index) => sqlGuard(match, source, index),
-  VG123: (_match, source, index) => !isParameterized(statementAround(source, index)),
+  // The string check: a `db.query(\`SELECT …${v}\`)` that sits inside a string
+  // literal is example code being *described* — a rule-definition file's own
+  // `description:` field carried two criticals. Code in a string is data.
+  VG010: (match, source, index, spans) =>
+    !isInside(spans, index, 'string') && sqlGuard(match, source, index),
 
   // The "base64 payload" test is a run of 20+ characters from the base64
   // alphabet, which any long camelCase identifier satisfies:
@@ -550,6 +636,17 @@ const MATCH_GUARDS: Record<
       callArgs(source, index),
     ),
 
+  // The rule is named "Weak *password* hashing" and its pattern is any md5 or
+  // sha1 use at all, so `hashlib.md5(hostname + mac)` — deriving a stable
+  // device id, with nothing secret in sight — was two criticals on one app.
+  // MD5 is only this finding when a password is what goes in, so a password
+  // has to be somewhere near the call. An etag, cache key or machine id is not
+  // weakly hashed; it is not a secret at all.
+  VG060: (_match, source, index) =>
+    /\b(?:password|passwd|pwd|passphrase)\b/i.test(
+      source.slice(Math.max(0, index - 400), index + 400),
+    ),
+
   // The name list is prefix-matched with `\w*` after it, so `hashPage === 'x'`
   // and `tokenCount === 3` read as secret comparisons. A timing attack needs the
   // *secret itself* on one side, so the identifier has to be one of those words,
@@ -599,7 +696,40 @@ const MATCH_GUARDS: Record<
   // 403` → `update(...)` is how an admin endpoint is supposed to be written,
   // and no amount of concurrency makes the caller an admin. Reported critical
   // on exactly that, beside VG1008, on the same correct route.
-  VG154: (match) => !AUTHORIZATION_CHECK.test(match),
+  //
+  // Two more shapes with the same select-if-write outline and no race worth the
+  // word, all four of this rule's hits in the sweep:
+  // — the select and the write touch *different tables*: a profile page that
+  //   counts the user's posts and later saves their notification prefs is
+  //   load-then-save, not check-then-act — nothing read is what gets written.
+  // — a count-based guard clause that *rejects* and otherwise appends the very
+  //   row being counted (`if (count >= 5) return 429` → `.insert(…)`) is how
+  //   every soft rate limiter is written; concurrency can overshoot the limit
+  //   by the number of in-flight requests, which is the accepted property of
+  //   the pattern, not a critical.
+  // The credits race keeps both its tables the same and its write an update,
+  // and stays reported — pinned by its regression test.
+  VG154: (match) => {
+    if (AUTHORIZATION_CHECK.test(match)) return false;
+    const act = /\.(update|insert|delete|upsert)\s*\(/.exec(
+      match.slice(match.search(/\bif\s*\(/) + 1),
+    );
+    const actIndex = act ? match.search(/\bif\s*\(/) + 1 + act.index : -1;
+    if (act && actIndex !== -1) {
+      const tables = [...match.matchAll(/\.from\s*\(\s*["']([^"']+)["']\s*\)/g)];
+      const checked = tables[0]?.[1];
+      const actedOn = tables.filter((t) => t.index! < actIndex).at(-1)?.[1];
+      if (checked && actedOn && checked !== actedOn) return false;
+      if (act[1] === 'insert') {
+        // The first `if` body: reject-and-return, then an append, is a rate
+        // limiter or dedupe, not a lost update. `[^{;]` lets the condition
+        // carry its own nested parens (`if ((count ?? 0) >= 5)`).
+        const cond = /\bif\s*\([^{;]{0,300}?\)\s*\{?\s*(return|throw)\b/.exec(match);
+        if (cond) return false;
+      }
+    }
+    return true;
+  },
 
 };
 
