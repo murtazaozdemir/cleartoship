@@ -400,6 +400,35 @@ release ships both.
 
 ## Open
 
+- [ ] **Three findings reported from the SysXray audit, 2026-10-28** (an outside
+      app, run as `node dist/cli.js --offline` over 44 files, 2.8s):
+      - **`VG120` SSRF — two false positives on a Cloudflare Worker.**
+        `src/worker.js:10` is a generic `fetchTimeout(url, opts)` helper whose
+        every caller passes `` `${env.SUPABASE_URL}` `` plus a fixed path, so the
+        host is never user-controlled; a taint check would clear it. Worse,
+        `src/worker.js:262` is `async fetch(request, env)` — the **Worker's own
+        default export handler**, not an outbound request at all. Matching the
+        method name `fetch` on a Workers entry point will fire on every Worker
+        ever written, so this one is likely to recur across the portfolio.
+      - **`VG146` "Unquoted .env Value" fires on shell scripts.**
+        `macos/release.sh:17,19,26` and `public/install.sh:39,49,54`. These are
+        `.sh` files assigning shell variables, not env files. Probably wants
+        scoping to `.env*`.
+      - **`VG012` is sink-level, so it cannot confirm a fix.** It flags
+        `X.innerHTML = <non-literal>`, which stays flagged whether or not the
+        inputs are escaped — the count was 7 before that app's XSS fix and 7
+        after. The real defect was 9 unescaped interpolations feeding those
+        sinks, which the scanner did not enumerate. It worked well as a pointer
+        to *where to read*; it is not a signal of whether the taint is handled.
+        Worth considering whether the finding can say "sink reached by a
+        non-literal; check the inputs" rather than "XSS via innerHTML".
+      - **Severity note on `CTS030`.** It returned CRITICAL, and so 🔴 HOLD, for a
+        real secret in a `.env` that is gitignored, untracked and absent from
+        every commit in every branch — the documented way that app's
+        `wrangler dev` gets real secrets. The finding is correct; the severity
+        cannot currently distinguish "secret in a committed file" from "secret in
+        a gitignored local dev file", which is the difference between an incident
+        and normal practice.
 - [ ] **Maintainer-only settings the audit turned up** (not doable from the
       repo): **enable immutable releases** (release.yml publishes via a draft,
       so it is compatible), **delete the dead `NPM_TOKEN` secret**, and add a
