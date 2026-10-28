@@ -398,6 +398,128 @@ QBQL markers the match cannot see, the bare-identifier line again. Self-scan
 `audit-2026-10-21`, stacked on the unreleased `audit-2026-10-13`; one 0.13.14
 release ships both.
 
+**The 2026-10-28 full audit went where the last one said it had not looked —
+the ~180 untriaged corpus `high` findings and `report.ts` — and the worst thing
+it found was a guarded rule standing beside an unguarded copy of itself.**
+VG408 ("Unsafe innerHTML Usage") matches `dangerouslySetInnerHTML={{ __html:`;
+VG012 ("XSS via innerHTML") matches `innerHTML` followed by `=` or `:`, and
+`dangerouslySetInnerHTML` *ends* in `InnerHTML`. So every VG408 match is a
+VG012 match at the same position — 15 of 15 across the seven dogfooding repos,
+and by construction, since VG408 requires a `{` after the `=`, which is exactly
+what VG012's `(?!['"]<)` lookahead lets through. The 2026-10-13 audit spent a
+whole pass teaching VG012 the difference between an HTML sink and a `<style>`
+element's CSS text, an all-literal expression and a value already through an
+escaper. VG408 carried no guard, so it reported all of it again under a
+different id: **eight `<style dangerouslySetInnerHTML={{ __html: css }} />` on
+BizDataly and shadcn's own `chart.tsx` on AppVitrine — the exact findings that
+audit cleared** — plus three `sanitizeJsonLd(…)` calls and three lines where it
+only repeated what VG012 had already said. Fourteen findings, not one of them a
+true positive VG012 does not already report. A guard beside an unguarded copy
+of itself does nothing, and nothing in the build said so; it is superseded now,
+the third instance of that shape after VG999→CTS081 and VG123→VG010.
+
+**Then four rules whose name describes a problem their pattern cannot see** —
+the VG1008 gap again, in four more places. VG120 is titled "SSRF via
+User-Controlled URL" and its description says "user-controlled input is passed
+directly to fetch()", but what it matches is `fetch(` plus any bare identifier.
+That made `export default { fetch(request, env, ctx) { … } }` — the Cloudflare
+Workers entry point, the most common shape there is — a high-severity SSRF
+finding on a *method definition*, and the delegation one line below it too; a
+three-argument `fetch` is never WHATWG `fetch`, which takes two. It reported
+datavot's `fetchNoOpenRedirect`, which calls `assertFetchableImageUrl`, sets
+`redirect: 'manual'`, bounds the chain at three hops and re-validates every
+`Location` — code that implements what the rule's own `fix` text asks for. And
+it reported a URL built on an origin no caller can move: the pattern already
+refuses `fetch("https://…")` written inline, and one `const` in between defeats
+it, which is how it is normally written (`const endpoint =
+"https://…/api/run"`, or `` `${base}/v3/company/${realmId}/query` `` over a
+literal base). The origin is resolved up to four assignments back now, through
+ternaries and concatenations, crediting a literal or env-derived scheme+host —
+**and the host specifically, not the scheme**, which is the line that matters:
+`https://${shop}/admin/api/…` where `shop` is a column from a database row
+stays reported, and in `run-saved-query.ts` line 133 clears while line 167, six
+lines of near-identical code away, does not. VG1021 ("AI Tool Schema Enum Built
+From User Input") fired seven times on `case "enum": return "≡";` — a switch
+over a JSON-Schema type name picking an icon, where the `"enum":` is a case
+label and the lowercase identifier the pattern wants is the keyword `return`.
+VG964 asked six Next.js **route handlers** to `import 'server-only'`; a
+`route.ts` cannot be imported by a client component, which is the entire hazard
+that rule exists for, so the import would guard nothing — the seventh finding,
+a shared `src/lib/session.js` that really is importable from both sides, stays.
+VG1006 ("Supabase select('*') Exposes All Columns") reported eight
+`select('*', { count: 'exact', head: true })` — Supabase's documented way to
+count rows, which returns **no rows at all**; the pattern stops at the `'*'`
+and never reads the second argument. The eight real `select('*')` fetches
+beside them are untouched.
+
+**The renderers dropped findings they were handed, and told GitHub a run had
+succeeded when it had not.** `renderMarkdown` partitioned findings into
+critical|high and medium|low by naming the severities, so an `info` finding —
+the Supabase anon key, asked for with `--min-severity info` — appeared in
+neither table while the "lower-severity findings" count said one fewer than it
+had; `renderFixPrompt` dropped them outright. Both are partitioned by what is
+*not* blocking now, so a renderer can rank a finding last but cannot lose one.
+Worse, the SARIF had no `invocations` block at all: an incomplete scan uploaded
+to code scanning as an ordinary successful analysis, showing what was found and
+nothing about what was never read — and with `allow-incomplete` or
+`fail-on: none` the job is green too, so this was the last surface that could
+have said so. It carries `executionSuccessful` and a notification per reason
+now. And the Markdown had no size bound while the Action posts it as a PR
+comment: GitHub refuses a body over 65,536 characters with a 422, which at
+~125 characters a row is about 535 findings — a number the 155-repo corpus
+reached twice (603 and 732) off nothing stranger than a large lockfile matched
+against OSV. The 422 landed in `|| echo "::warning::Could not post… (does the
+token have pull-requests: write?)"`, so the one surface a reviewer reads showed
+nothing and blamed the wrong cause. It bisects down to a row count that fits
+and says how many are not shown, keeping the heading, the counts and the
+incomplete warning always.
+
+**Three of this audit's own fixes were wrong first, and the corpus caught all
+three** — worth recording, because each was an over-credit, the direction that
+hides real findings rather than adding noise. The Workers-handler check asked
+whether a `) {` followed within 120 characters, which an ordinary
+`if (!response.ok) {` on the next line satisfies — that cleared an AppVitrine
+edge function's `fetch(imageUrl)` on a value straight out of `searchParams`.
+The arity check counted arguments with `[^(),]{1,40},` twice, and a character
+class does not stop at an object literal, so `fetch(url, { ...opts, signal })`
+read as three arguments — SysXray's `fetchTimeout`, on a bare parameter. Both
+are read off the matching close paren now. And the forward lookup for a
+module-level const declared below its use was unanchored, so a `const url =
+new URL(request.url)` in a later function vouched for an earlier function's
+`fetch(url)`; it is `^`-anchored to column 0. The first version of the origin
+resolver also credited `` `https://${host}/path` `` on the literal `https://`
+prefix alone, which would have hidden exactly the database-row host above. All
+four are pinned by keep-case tests.
+
+**Verification:** 274 → 299 tests; **15 of the 25 new ones fail against the
+pre-fix build, and all 10 that pass are keep-cases** — the true positives each
+fix had to preserve, three of them pinning the over-credits above. Before/after
+over seven real repositories (BizDataly, StorageVisual, datavot, aistoreaudit,
+Cherrly, AppVitrine, SysXray), 1,638 files, run back-to-back on the same
+checkouts: **452 → 385 findings, criticals 9 → 9, highs 194 → 148, zero
+findings added**, scan times unchanged (−31 VG120, −15 VG408, −8 VG1006,
+−7 VG1021, −6 VG964). **Every removal was read**, and what stays is real or
+honestly undecidable: BizDataly's `downloadAndParseJSONL(url)` and datavot's
+LinkedIn `uploadUrl` take a URL from an external API's response, StorageVisual's
+bridge follows a `Location` header to an arbitrary host and writes the result
+into its own install directory, and the database-row host stays critical to the
+rule's purpose. No verdict changed on any repo — these were noise, not
+verdict-flipping bugs, which is the honest summary. Self-scan 🟢 on the same
+five lows, 68 files — after the first build added a sixth: the tool reported
+**this audit's own new code**, a `[\w-]+(?:\.[\w-]+)+` hostname pattern, as
+VG153 ReDoS. It was bounded in practice (it only ever sees ≤400 characters) but
+rewritten without the nesting rather than suppressed, since running the vendored
+patterns through a linear matcher is the thing 0.13.13 exists for. The
+identifiers this audit interpolates into dynamically built patterns are also
+re-checked against `^[A-Za-z_$][\w$]*$` at the point of use rather than trusting
+every caller. One live-corpus lesson: a first before/after showed "+1 finding"
+that turned out to be `datavot/scripts/invariants-test.mjs` being **edited by
+another session while the scan ran** (mtime four minutes old, a VG153 line
+moving 5434 → 5443 → 5540), which is why the final sweep was run with both
+builds back-to-back. Not released: the work sits on top of `audit-2026-10-21`,
+itself stacked on the unreleased `audit-2026-10-13`; one 0.13.14 ships all
+three.
+
 ## Open
 
 - [ ] **Three findings reported from the SysXray audit, 2026-10-28** (an outside
@@ -508,9 +630,10 @@ release ships both.
       already exists to fix. Needs the same read-the-code treatment the other
       rules got; hasn't started.
 
-- [ ] **Two audits are not released.** The 2026-10-13 fixes sit on
-      `audit-2026-10-13` (`4e1d149`), and the 2026-10-21 fixes on
-      `audit-2026-10-21`, stacked on it; nothing pushed, `main` untouched. Both
+- [ ] **Three audits are not released.** The 2026-10-13 fixes sit on
+      `audit-2026-10-13` (`4e1d149`), the 2026-10-21 fixes on
+      `audit-2026-10-21`, stacked on it, and the 2026-10-28 fixes on top of
+      those; nothing pushed, `main` untouched. All three
       change scanner behaviour — rules that fired on correct code now stay
       quiet, whole classes of file (HTML, TOML, `.rules`, SFCs, UTF-16) are
       read for the first time — so nobody gets any of it until the branches are
@@ -531,6 +654,13 @@ release ships both.
       the ~180 corpus highs (BizDataly 59, StorageVisual 45, datavot 39) have
       never had the read-the-code pass the criticals got. The next audit
       should start from one of those rather than re-walking this one's ground.
+      **Done 2026-10-28** — see the entry above: the renderers and the ~180
+      highs were the two it took. `server-actions.ts` / `auth-helpers.ts`
+      (3,286 lines) is still the one nobody has re-read since 2026-10-13.
+- [ ] **Three things the 2026-10-13 audit noticed and did not act on.**
+      (The first sentence of this item was lost when `fb24b85` wrote over its
+      opening line; restored here from the commit that introduced it.) 8
+      vendored rules
       carry an `API:`-prefixed OWASP label (the API Security Top 10, a
       different list) that the README's OWASP table does not mention, so those
       rules' category reads as unmapped. Now that `site/public` HTML is
@@ -561,6 +691,34 @@ release ships both.
       sample keys are realistic by construction (that is their job), no path
       convention marks them, and a scanner that special-cases one repo's layout
       is shaping itself around its corpus.
+- [ ] **Noticed in the 2026-10-28 audit, deliberately not acted on.**
+      **`action.yml` runs the whole scan two or three times** — once for
+      `--json`, once for `--markdown`, and again for `--sarif` when it is
+      asked for. That is 2–3× the wall clock and 2–3× the registry and OSV
+      traffic on every CI run, and worse than the cost: **the severity gate is
+      computed from the JSON run and the PR comment is rendered from a
+      different one**, so if the two disagree — a registry that answers once
+      and times out the next — the comment and the verdict are from different
+      scans. The fix is a CLI that writes several formats from one scan (a
+      `--write <format>:<path>` option), then one invocation in the Action;
+      that is a feature, not an audit patch, so it is recorded rather than
+      half-built at the end of a pass.
+      **VG926's name does not match what it matches.** "Next.js / React Server
+      Components DoS" fires on `"react": "^19.2.4"` with no requirement that
+      the project has Next.js or RSC at all — StorageVisual is a Vite SPA with
+      no `next` dependency and no Server Functions, and got 5 highs, 3 of them
+      on `package-lock.json` and 2 on the `package.json` beside it, so the
+      same dependency is reported twice. The version range is correct and
+      reachability analysis is deliberately out of scope, so this is a
+      severity-and-wording problem rather than a false positive; it also only
+      appears with `--offline`, since `GUARDVIBE_CVE_RULE_IDS` stand down once
+      OSV has answered. Both halves (framework-gating a CVE rule, and
+      de-duplicating a version rule across a manifest and its lockfile) need
+      their own read-the-removals pass across the whole CVE ruleset.
+      **`verdictOf` is documented as "the one place the verdict is decided"
+      and `renderTerminal` still decides it again** from `scan.counts` inline.
+      The two agree today, checked case by case; it is one idea in two places,
+      which is how `NON_PRODUCTION` drifted.
 - [ ] **Six new VG012 findings on SysXray, nothing written down yet.** The
       sweep read SysXray's HTML dashboards for the first time and they really
       do assign `innerHTML` from strings concatenated out of scan data
@@ -568,6 +726,32 @@ release ships both.
       own apps belong in `security-scans/<date>-<time>.md` in *that* repo, not
       here — decide whether these are worth a report (the data is local machine
       telemetry, not attacker-controlled input) and write it there if so.
+- [ ] **Where the 2026-10-28 audit did not look — scope for the next one.**
+      That pass took the renderers and the corpus highs, which is what the last
+      one left. What is still unread: **`server-actions.ts` /
+      `auth-helpers.ts`, 3,286 lines between them, last audited 2026-10-13**
+      and skipped by two audits running — the largest unexamined surface in the
+      tool, and the one behind CTS001/CTS004, whose known false-positive
+      classes are still open above. The site Worker and the workflows *were*
+      re-read this time and nothing new came out of them: the Worker verifies
+      Stripe signatures with SubtleCrypto, ignores stale events by `created`,
+      re-reads the subscription rather than trusting the payload, and repeats
+      the age check at the write; every third-party action is SHA-pinned, there
+      is no `pull_request_target`, and `release.yml` is default-deny with
+      per-job grants. Also untouched: the **~150 remaining highs** after this
+      pass (BizDataly 42, StorageVisual 38, datavot 30) — this audit read every
+      *cluster* of three or more and the singletons are unexamined — and the
+      **mediums have never been triaged at all** on any repo.
+- [x] **BizDataly's hardcoded Shopify token is written up.** Reported at
+      `/Users/Shared/BizDataly/security-scans/2026-10-28-1841.md` per the
+      convention: a live `shpat_…` Admin API token for a development store,
+      hardcoded as a `process.env.X || "shpat_…"` fallback in two server
+      modules and a bare `const` in three scripts, duplicated across the
+      `Shopify/ShopifyApp/` copy (10 source locations), plus two
+      `.claude/settings.local.json` permission entries that embed it in an
+      allowlisted `curl`. Not in any git history today — the BizDataly root is
+      not a repo and `saas/.env.local` is correctly ignored — which is exactly
+      why it is worth fixing before either folder becomes one.
 
 ## Later — recorded, not being worked on
 

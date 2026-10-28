@@ -77,6 +77,25 @@ const SUPERSEDED = new Map<string, string>([
   // matches VG010's guard had dropped for not being SQL at all
   // (`querySelectorAll`-class verbs with no SQL keyword in the statement).
   ['VG123', 'VG010'],
+  // VG408 matches `dangerouslySetInnerHTML={{ __html:` and VG012 matches
+  // `innerHTML` followed by `=` or `:` — and `dangerouslySetInnerHTML` *ends*
+  // in `InnerHTML`, case-insensitively, so every VG408 match is a VG012 match
+  // at the same position. Proven, not assumed: 15 of 15 raw VG408 matches
+  // across the seven dogfooding repos, and by construction too — VG408 needs a
+  // `{` after the `=`, which is exactly what VG012's `(?!['"]<)` lookahead
+  // lets through.
+  //
+  // Keeping both did not merely double-report. The 2026-10-13 audit spent a
+  // pass teaching VG012 the difference between an HTML sink and a `<style>`
+  // element's CSS text, an all-literal expression, and a value already through
+  // an escaper. VG408 carries no guard, so it reported all of it again under a
+  // different id: eight `<style dangerouslySetInnerHTML={{ __html: css }} />`
+  // on BizDataly — the very shape that audit cleared — plus three
+  // `sanitizeJsonLd(...)` / `sanitizeThemeInit(...)` calls, and three lines
+  // where it simply said what VG012 had already said. Fourteen findings, not
+  // one of them a true positive VG012 does not already report. A guarded rule
+  // beside an unguarded copy of itself means the guard does nothing.
+  ['VG408', 'VG012'],
 ]);
 
 /**
@@ -432,6 +451,203 @@ function hasDynamicPart(expr: string): boolean {
 }
 
 /**
+ * A call that establishes a URL is safe to fetch before it is fetched — an
+ * allowlist check, a private-IP rejection, a URL parser used as a gate. This is
+ * the SSRF equivalent of `ESCAPES_HTML`, and the same judgement: a call whose
+ * name says it validates the URL is credited, because the alternative is to
+ * report the mitigation.
+ */
+const SSRF_VALIDATED =
+  /\b(?:assert|validate|check|ensure|guard|is)[A-Za-z]*(?:Url|URL|Uri|URI|Host|Origin|Fetchable|Address)[A-Za-z]*\s*\(/;
+
+/** An origin no caller can move: an absolute literal, or one read from the environment. */
+const LITERAL_ORIGIN = /^\s*['"`]https?:\/\/[^\s'"`$]/;
+const ENV_ORIGIN =
+  /^\s*(?:process\.env\b|Deno\.env\.get\s*\(|import\.meta\.env\b|(?:context\.|c\.)?env\.[A-Z_]\w*)/;
+/**
+ * A quoted hostname with no scheme — `const SHOP = "shop.myshopify.com"`, used
+ * as `` `https://${SHOP}/admin/api/2026-04` ``. The scheme is in the template
+ * and the host is this literal, so the origin is still fixed.
+ */
+// Written without a nested quantifier on purpose: `[\w-]+(?:\.[\w-]+)+` is the
+// shape VG153 exists to find, and this project's own self-scan reported it the
+// moment it was written. One character class plus a "has a dot" test says the
+// same thing with nothing to backtrack over.
+const LITERAL_HOST = /^\s*(['"])([\w.-]+)\1\s*$/;
+
+function isLiteralHost(expr: string): boolean {
+  const m = LITERAL_HOST.exec(expr);
+  return m !== null && m[2]!.includes('.') && !m[2]!.startsWith('.') && !m[2]!.endsWith('.');
+}
+
+/**
+ * Split a conditional expression at its top-level `?` and `:`, ignoring any
+ * inside quotes. A regex cannot: both branches of
+ * `sandbox ? "https://a.example" : "https://b.example"` contain the `:` of
+ * their own scheme, which is how the first version of this guard reported two
+ * QuickBooks callers it had cleared one line earlier.
+ */
+function splitTernary(expr: string): [string, string] | null {
+  let quote = '';
+  let depth = 0;
+  let q = -1;
+  let colon = -1;
+  for (let i = 0; i < expr.length; i++) {
+    const c = expr[i]!;
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = '';
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') depth--;
+    else if (depth === 0 && c === '?' && expr[i + 1] !== '.' && expr[i + 1] !== '?' && q === -1) q = i;
+    else if (depth === 0 && c === ':' && q !== -1 && colon === -1) colon = i;
+  }
+  if (q === -1 || colon === -1) return null;
+  return [expr.slice(q + 1, colon), expr.slice(colon + 1)];
+}
+
+/**
+ * Is the URL handed to `fetch` built on an origin that is fixed by the code?
+ *
+ * The scheme and host are what SSRF turns on: a path or query appended to a
+ * constant base cannot send the request to 169.254.169.254 or to localhost, no
+ * matter who supplies the path. So the identifier is followed back through its
+ * assignment — at most `depth` hops, which covers the two shapes that actually
+ * occur (`const url = `${base}/v3/…`` over `const base = useSandbox ? A : B`) —
+ * and the first segment of whatever it was assigned has to be a literal
+ * `https://…`, an environment read, or another identifier that resolves to one.
+ * A ternary has to resolve on both branches. Anything else is unknown, and
+ * unknown stays reported.
+ */
+function hasKnownOrigin(name: string, source: string, index: number, depth: number): boolean {
+  if (depth <= 0) return false;
+  // `name` came out of the scanned repository and is about to be interpolated
+  // into a pattern. Every caller already constrains it to an identifier, which
+  // is why nothing can reach here with a metacharacter in it — checked anyway,
+  // because a guard that depends on its callers staying careful is one edit
+  // away from not holding.
+  if (!/^[A-Za-z_$][\w$]*$/.test(name)) return false;
+  // The nearest assignment at or above the use, so a later rebinding of the
+  // same name in another function is not what gets credited.
+  const assign = new RegExp(`\\b(?:const|let|var)\\s+${name}\\s*(?::[^=\\n]{0,60})?=\\s*([^;\\n]{0,400})`, 'g');
+  let value: string | null = null;
+  for (const m of source.slice(0, index).matchAll(assign)) value = m[1]!;
+  if (value === null) {
+    // A parameter or an import: unknown here. A *module-level* const declared
+    // below the use is still in scope, so look forward — but only at column 0.
+    // Without that anchor a `const url = new URL(request.url)` in some later
+    // function credited an earlier function's `fetch(url)` on a bare
+    // parameter, which is the opposite of what this guard is for.
+    const later = new RegExp(
+      `^(?:const|let|var)\\s+${name}\\s*(?::[^=\\n]{0,60})?=\\s*([^;\\n]{0,400})`,
+      'm',
+    ).exec(source.slice(index));
+    if (!later) return false;
+    value = later[1]!;
+  }
+  return resolvesToOrigin(value, source, index, depth - 1);
+}
+
+/**
+ * Does this expression carry an origin the caller cannot move?
+ *
+ * The hop budget is spent only on following a name to its assignment; reading a
+ * ternary or a template literal is free, because `const base = sandbox ? A : B`
+ * and `const url = `${base}/v3/…`` are one idiom written across three lines,
+ * and charging each line would run out before reaching the literal.
+ */
+function resolvesToOrigin(expr: string, source: string, index: number, depth: number): boolean {
+  const e = expr.trim();
+  if (ENV_ORIGIN.test(e)) return true;
+  if (LITERAL_ORIGIN.test(e)) return true;
+  const tpl = /^`([^`]*?)(?:\$\{([^{}]{0,160})\}|`)/.exec(e);
+  if (tpl) {
+    const prefix = tpl[1] ?? '';
+    // `https://${host}/path` is NOT a fixed origin: the host is the hole, and
+    // the host is the whole of SSRF. The prefix has to reach past the `//` into
+    // a hostname before the first interpolation, or the hole itself has to
+    // resolve to an origin.
+    if (/^https?:\/\/[^\s/$]+/.test(prefix)) return true;
+    const hole = tpl[2]?.trim();
+    if (hole && /^https?:\/\/$|^$/.test(prefix)) {
+      // With the scheme already written, the hole only has to carry the host.
+      if (prefix !== '' && isFixedHost(hole, source, index, depth)) return true;
+      return resolvesToOrigin(hole, source, index, depth);
+    }
+    return false;
+  }
+  const ternary = splitTernary(e);
+  if (ternary) {
+    return (
+      resolvesToOrigin(ternary[0], source, index, depth) &&
+      resolvesToOrigin(ternary[1], source, index, depth)
+    );
+  }
+  // A concatenation is its first operand's origin.
+  const concat = /^([^+]{1,200}?)\s*\+/.exec(e);
+  if (concat) return resolvesToOrigin(concat[1]!, source, index, depth);
+  if (/^[A-Za-z_$]\w*$/.test(e)) return hasKnownOrigin(e, source, index, depth);
+  return false;
+}
+
+/**
+ * How many arguments the call at `index` is passed, counting only top-level
+ * commas so an object literal, an array or a nested call counts as one. Returns
+ * 0 when no argument list is found within a bounded window.
+ */
+function argumentList(source: string, index: number): { arity: number; after: string } | null {
+  const open = source.indexOf('(', index);
+  if (open === -1 || open > index + 40) return null;
+  let depth = 0;
+  let quote = '';
+  let args = 1;
+  const end = Math.min(source.length, open + 4000);
+  for (let i = open; i < end; i++) {
+    const c = source[i]!;
+    if (quote) {
+      if (c === '\\') i++;
+      else if (c === quote) quote = '';
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') { quote = c; continue; }
+    if (c === '(' || c === '[' || c === '{') depth++;
+    else if (c === ')' || c === ']' || c === '}') {
+      depth--;
+      if (depth === 0) return { arity: args, after: source.slice(i + 1, i + 80) };
+    } else if (depth === 1 && c === ',') args++;
+  }
+  return null;
+}
+
+/** The host half of a `https://${…}/…` template: a literal hostname, an env read, or a name for one. */
+function isFixedHost(expr: string, source: string, index: number, depth: number): boolean {
+  const e = expr.trim();
+  if (isLiteralHost(e) || ENV_ORIGIN.test(e)) return true;
+  const ternary = splitTernary(e);
+  if (ternary) {
+    return (
+      isFixedHost(ternary[0], source, index, depth) && isFixedHost(ternary[1], source, index, depth)
+    );
+  }
+  if (!/^[A-Za-z_$][\w$]*$/.test(e) || depth <= 0) return false;
+  // Before the use, else a module-level declaration at column 0 — the same rule
+  // as `hasKnownOrigin`, so a later local of the same name cannot be credited.
+  const assign = new RegExp(`\\b(?:const|let|var)\\s+${e}\\s*(?::[^=\\n]{0,60})?=\\s*([^;\\n]{0,400})`, 'g');
+  let value: string | null = null;
+  for (const m of source.slice(0, index).matchAll(assign)) value = m[1]!;
+  if (value === null) {
+    const later = new RegExp(`^(?:const|let|var)\\s+${e}\\s*(?::[^=\\n]{0,60})?=\\s*([^;\\n]{0,400})`, 'm').exec(
+      source.slice(index),
+    );
+    value = later ? later[1]! : null;
+  }
+  return value === null ? false : isFixedHost(value, source, index, depth - 1);
+}
+
+/**
  * A `<style>` element's own text. `<style dangerouslySetInnerHTML={{ __html:
  * css }} />` is how React injects a stylesheet, and it was 7 of the 14 real
  * VG012 findings across the dogfooding repos — reported `high` as cross-site
@@ -465,7 +681,14 @@ const AUTHORIZATION_CHECK = new RegExp(
 
 const MATCH_GUARDS: Record<
   string,
-  (match: string, source: string, index: number, spans: readonly Span[]) => boolean
+  (
+    match: string,
+    source: string,
+    index: number,
+    spans: readonly Span[],
+    /** Path relative to the scan root, for the guards that are about where a file sits. */
+    relPath?: string,
+  ) => boolean
 > = {
   // A `"link": true` entry is a workspace or pnpm symlink resolved to a path on
   // disk rather than a tarball, so it has no integrity hash by design. Thirty of
@@ -610,7 +833,88 @@ const MATCH_GUARDS: Record<
   // SSRF is a *server* being made to fetch a URL it should not. A module marked
   // `'use client'` runs in the browser, where the request leaves the user's own
   // machine and crosses no trust boundary of yours.
-  VG120: (_match, source) => !/^\s*(['"])use client\1/m.test(source.slice(0, 400)),
+  //
+  // Three more things the pattern cannot tell apart, all of them on the corpus.
+  // The rule's own name is "SSRF via User-Controlled URL" and its description
+  // says "user-controlled input is passed directly to fetch()", but what it
+  // matches is `fetch(` followed by any bare identifier — the same gap between
+  // a rule's name and its pattern that VG1008 had.
+  //
+  // 1. A *definition* is not a call. `export default { fetch(request, env, ctx)
+  //    { … } }` is the Cloudflare Workers entry point — the most common shape
+  //    there is — and `fetch(request, env, ctx)` one line below it delegates
+  //    the same Request object to the next handler. Neither takes a URL at all;
+  //    WHATWG `fetch` has two parameters, so a three-argument one is never it.
+  //    VG105 was fixed for reading a declaration as a call in 0.13.10; this is
+  //    the same mistake in another rule.
+  // 2. SSRF is about controlling the *host*. The pattern already refuses
+  //    `fetch("https://…")` and `fetch(`${process.env.X}/…`)` written inline;
+  //    one `const` in between defeats it, which is how it is normally written.
+  //    `const endpoint = "https://biz.dataly.us/api/cron/run-schedules"` and
+  //    `const url = `${baseUrl}/v3/company/${realmId}/query?…`` over a
+  //    literal or env-derived base are not URLs an attacker can point
+  //    anywhere, whatever the path says. So the origin is resolved up to two
+  //    assignments back; a bare identifier whose origin cannot be established
+  //    stays reported, the line VG012 draws.
+  // 3. A URL that went through an SSRF validator is the fix, not the bug.
+  //    datavot's `fetchNoOpenRedirect` calls `assertFetchableImageUrl(startUrl)`,
+  //    sets `redirect: 'manual'`, bounds the chain at three hops and
+  //    re-validates every `Location` — it implements what this rule's own
+  //    `fix` text asks for, and was reported `high` for it.
+  VG120: (match, source, index) => {
+    if (/^\s*(['"])use client\1/m.test(source.slice(0, 400))) return false;
+    const arg = /([A-Za-z_$]\w*)\s*[,)]\s*$/.exec(match)?.[1];
+    const args = argumentList(source, index);
+    // A method shorthand or function declaration: `fetch(request, env, ctx) {`
+    // — its *own* argument list is followed by the body's brace. Read off the
+    // matching close paren, not a regex: `[^)]{0,120}\)\s*\{` found the next
+    // `if (…) {` after an ordinary call and cleared it, which is how an
+    // AppVitrine edge function's `fetch(imageUrl)` went quiet.
+    if (
+      args &&
+      /^\s*(?::\s*[\w<>[\].|,? ]+\s*)?\{/.test(args.after) &&
+      /^\s*(?:async\s+)?(?:function\s*\*?\s*)?fetch\s*\(/.test(match)
+    ) {
+      return false;
+    }
+    // `fetch(request, env, ctx)` — three arguments is never WHATWG fetch, which
+    // takes two. This is a Workers handler, or a delegation to one.
+    //
+    // Counted by walking the argument list, not by regex: the first version of
+    // this used `[^(),]{1,40},\s*[^(),]{1,40},` and a character class does not
+    // stop at an object literal, so `fetch(url, { method, headers })` — the
+    // commonest shape there is — read as three arguments and was cleared.
+    // SysXray's `fetch(url, { ...opts, signal: controller.signal })` is how
+    // that turned up, on a `url` that is a bare parameter.
+    if (args && args.arity >= 3) return false;
+    if (!arg) return true;
+    const scope = enclosingBody(source, index);
+    // A function that returns before the fetch when there is no `window` runs
+    // only in a browser, where the request crosses no trust boundary of yours —
+    // the same judgement as the `'use client'` check above, for an isomorphic
+    // module that states it at the top of the function instead of the file.
+    // Read from a bounded window rather than `scope`, because the fetch is
+    // normally a few frames in (`srcs.map(async (url) => { … fetch(url) })`)
+    // and the guard sits at the top of the function that owns the map.
+    if (
+      /typeof\s+window\s*===?\s*(['"])undefined\1[^;\n]{0,80}\breturn\b/.test(
+        source.slice(Math.max(0, index - 1500), index),
+      )
+    ) {
+      return false;
+    }
+    if (
+      /^[A-Za-z_$][\w$]*$/.test(arg) &&
+      (SSRF_VALIDATED.test(scope) || SSRF_VALIDATED.test(source.slice(0, index)))
+    ) {
+      // Credited only when the validated value is the one being fetched, or is
+      // what it was assigned from.
+      if (new RegExp(`\\b${arg}\\b\\s*=[^;\\n]{0,200}?${SSRF_VALIDATED.source}`).test(source)) {
+        return false;
+      }
+    }
+    return !hasKnownOrigin(arg, source, index, 4);
+  },
 
   // Both of these learned an API name that moved. The Vercel AI SDK replaced
   // `maxSteps` with `stopWhen`, and across a corpus of real agent apps
@@ -673,6 +977,55 @@ const MATCH_GUARDS: Record<
   // criticals on correct code is the worst failure this project has, and the
   // same contradiction CTS001 already settles for VG1025 above.
   VG1008: (_match, source, index) => !AUTHORIZATION_CHECK.test(enclosingBody(source, index)),
+
+  // The rule is about a *tool schema's* enum list being computed at runtime, so
+  // its JSON-Schema branch looks for `"enum":` followed by a lowercase name.
+  // `case "enum": return "≡";` is that, character for character — a switch over
+  // a JSON-Schema type name, mapping it to an icon or a badge colour. Seven
+  // findings across BizDataly's query builder and type-colour table, every one
+  // a switch label; the `case` keyword in front and the `return` behind it are
+  // both visible from the match. A statement keyword can never be a schema's
+  // enum values, and a `case` label is not an object property.
+  VG1021: (match, source, index) => {
+    if (/^["']enum["']/.test(match)) {
+      if (/\bcase\s*$/.test(source.slice(Math.max(0, index - 12), index))) return false;
+      if (/^["']enum["']\s*:\s*(?:return|break|continue|throw|yield|await|new|typeof|delete|void|in|instanceof)\b/.test(match)) {
+        return false;
+      }
+    }
+    return true;
+  },
+
+  // "Server-Only Module Missing in Sensitive File": a module that reads a
+  // secret and imports from `next` but never marks itself `server-only` could
+  // be pulled into a client component, taking the secret into the bundle. A
+  // route handler cannot be. `app/**/route.ts` is a route entry point that Next
+  // invokes on the server — it is not importable from a client component, which
+  // is the whole hazard the rule exists for, and `server-only` in one would
+  // guard nothing. Six of the seven findings on the corpus were route handlers
+  // (`api/cron/run-schedules`, `api/shopify/callback`, `auth/quickbooks/callback`
+  // …), reported `high` on line 1, at the import. The seventh is a shared
+  // `src/lib/session.js` that really is importable from both sides, and stays.
+  // Pages and layouts are server components by default in the App Router and
+  // are equally not importable, so they are credited the same way.
+  VG964: (_match, _source, _index, _spans, relPath) =>
+    !/(?:^|\/)app\/.*\/(?:route|page|layout|template|default|error|loading|not-found)\.[cm]?[jt]sx?$/.test(
+      relPath ?? '',
+    ) && !/(?:^|\/)pages\/api\/.*\.[cm]?[jt]sx?$/.test(relPath ?? ''),
+
+  // `select('*', { count: 'exact', head: true })` is Supabase's own documented
+  // way to count rows: `head: true` sends the request with `Prefer: head=true`
+  // and returns **no rows at all**, only the count header. The rule's pattern
+  // stops at the `'*'` and never reads the second argument, so a query that
+  // returns zero columns was reported as "Exposes All Columns" — three of
+  // StorageVisual's eleven, all of them rate-limit counters in edge functions.
+  // Without `head: true` the rows do come back alongside the count, so that
+  // stays reported; the other eight are real `select('*')` fetches and are
+  // untouched.
+  VG1006: (_match, source, index) => {
+    const call = source.slice(index, index + 220);
+    return !/\.select\s*\(\s*(?:["']\*["']|)\s*,[^)]*\bhead\s*:\s*true\b/.test(call);
+  },
 
   // "XSS via innerHTML" is about untrusted data reaching the sink, and the
   // pattern is `innerHTML\s*=\s*` with a lookahead for a quoted `<` — so
@@ -2505,7 +2858,7 @@ export const communityScanner: Scanner = {
             if (!re.global) break;
             continue;
           }
-          if (guard && !guard(m[0], source, index, spans)) {
+          if (guard && !guard(m[0], source, index, spans, relPath)) {
             if (!re.global) break;
             continue;
           }
