@@ -520,6 +520,36 @@ builds back-to-back. Not released: the work sits on top of `audit-2026-10-21`,
 itself stacked on the unreleased `audit-2026-10-13`; one 0.13.14 ships all
 three.
 
+**0.13.14 ships all three audits (2026-10-29).** `main` fast-forwarded onto
+`audit-2026-10-28` — six commits, 22 files, +2,853/−54 — so the 2026-10-13,
+2026-10-21 and 2026-10-28 audits all go out under one version instead of
+accumulating further; the three audit branches were ancestors of the tip, so
+nothing had to be merged by hand. Bumped `package.json`, both root `version`
+fields in `package-lock.json`, and the six doc literals the pin check asserts.
+One version literal that the check deliberately *does not* match was stale
+anyway — README prose reading "so `@v0.13.13` runs ClearToShip 0.13.13" as a
+generic illustration of ref pinning — and it is version-free now (`@vX.Y.Z`)
+rather than bumped, which is the drift the check exists to catch, one line
+outside its reach.
+
+**The whole release gate was run locally before the tag, not just at the end.**
+Version pins 6/6 at v0.13.14; `npm ci` 0 vulnerabilities; **299 tests pass, 0
+fail, and — run file by file — 0 skipped in all 17 files**, which is the check
+worth naming here, because three network-gated tests once skipped silently on
+this machine for months; the three new audit files contribute 61 of the 299
+(audit-coverage 14, audit-oct21 22, audit-oct28 25). Self-scan run with CI's
+exact argument list, online and without `--allow-incomplete`: **exit 0, 🟢 CLEAR
+TO SHIP, 68 files, the same 5 low-priority notes**, reaching OSV.dev (12
+resolved versions) and npm (12 packages), so it was complete rather than exit-3
+incomplete. All three release assets built and all four of `release.yml`'s
+pre-signing assertions reproduced by hand: the bundle reports `0.13.14`, it
+carries its Apache licence text, `cleartoship-standalone.tgz` ships
+`package/LICENSES/`, and `cleartoship-0.13.14.tgz` exists. Also checked a
+stale-file trap that the workflow's `cp standalone/cleartoship.mjs` would not
+have caught on its own: `bundle.mjs` writes `bin/cleartoship.mjs` and copies it
+up (line 121), and the two hashes are identical, so the bare file cannot be a
+leftover from an earlier build.
+
 ## Open
 
 - [ ] **Three findings reported from the SysXray audit, 2026-10-28** (an outside
@@ -786,8 +816,17 @@ three.
   at *parse* time — and an unparsed file produces **no findings**, not an error.
   A scanner's worst failure is reporting clean on code it never read.
   ⚠️ **Local dev needs a newer Node than this machine's default.** `node` on the
-  PATH here is v22.14, below the floor. Homebrew's v26 satisfies it:
-  `export PATH="/usr/local/opt/node/bin:$PATH"` before `npm install` or `npm test`.
+  PATH here is v22.14, below the floor. **Homebrew's v26 no longer runs** (as of
+  2026-10-29): the bottle links `libada.3` and `libsimdjson.33`, the Cellar has
+  ada-url 4 and simdjson 5, and it dies in dyld before printing a version — so
+  `export PATH="/usr/local/opt/node/bin:$PATH"` now buys a broken interpreter
+  rather than a newer one. `brew reinstall node` builds from source on this
+  macOS/Intel pair (no bottle), which takes long enough that it is not the
+  unblocking move. What 0.13.14 was built with instead: the official
+  `node-v22.23.4-darwin-x64` tarball, checksum-verified against nodejs.org's
+  `SHASUMS256.txt`, unpacked outside the repo and put on the PATH for the
+  build — and v22 is what `ci.yml` and `release.yml` set anyway, so it matches
+  the release runner more closely than v26 did.
 
 ## Deliberately not covered, and why
 
