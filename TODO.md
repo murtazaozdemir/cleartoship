@@ -550,6 +550,37 @@ have caught on its own: `bundle.mjs` writes `bin/cleartoship.mjs` and copies it
 up (line 121), and the two hashes are identical, so the bare file cannot be a
 leftover from an earlier build.
 
+**Shipped and verified, 2026-10-29 09:15 UTC.** `v0.13.14` is published,
+not draft, with all three assets at the byte sizes the local build produced
+(428,670 / 557,032 / 2,377,500). All four rows of the release skill's table
+were checked rather than read off a green run, and two of them independently:
+`gh release view` lists the assets; the downloaded bundle runs and reports
+`0.13.14`; `gh attestation verify` exits 0 and its predicate names
+`.github/workflows/release.yml` at `refs/tags/v0.13.14` with source digest
+`cfef22a`, so the signature is tied to this workflow and this tag rather than
+merely existing; `curl https://cleartoship.app/cleartoship.mjs | shasum -a 256`
+is `0c4c2ad…871c`, which is the release asset's hash, and `deploy-site.yml`'s
+own post-deploy comparison reported the same sha256 from the runner. The Worker
+moved to version `b5f53e42-4293-495b-a8f1-6d81424f6dd5`, confirmed by the
+workflow's `wrangler deployments list` read-back rather than by the deploy step
+exiting 0, and the live footer pill reads `v0.13.14`. **The release bundle is
+byte-identical to the one built here** — same `0c4c2ad…871c` — so the tag
+reproduced the local build exactly. And it was run, not just version-checked:
+the downloaded bundle scans this repo to the same 🟢, same 68 files, same 5
+low-priority notes, same 402 community rules.
+
+**One coordination note worth keeping.** A second session was working in this
+repo at the same time and committed the version bump out from under this one —
+`e597239`, at 05:08:47 local, while the self-scan was still running. Its
+content was byte-for-byte the working tree this session had already gated
+(including the version-free `@vX.Y.Z` README line), and its message is
+accurate, so it was kept rather than rewritten; this session's own commit was
+reworded, since it then held only `TODO.md` while still claiming the bump. The
+check that caught it was reading `git status` after `git add -A` and seeing one
+file where seven were expected — not something a test would have failed on.
+Worth remembering with the audit's other concurrency surprise: the same
+overlap produced the phantom "+1 finding" from a file edited mid-scan.
+
 ## Open
 
 - [ ] **Three findings reported from the SysXray audit, 2026-10-28** (an outside
@@ -660,19 +691,6 @@ leftover from an earlier build.
       already exists to fix. Needs the same read-the-code treatment the other
       rules got; hasn't started.
 
-- [ ] **Three audits are not released.** The 2026-10-13 fixes sit on
-      `audit-2026-10-13` (`4e1d149`), the 2026-10-21 fixes on
-      `audit-2026-10-21`, stacked on it, and the 2026-10-28 fixes on top of
-      those; nothing pushed, `main` untouched. All three
-      change scanner behaviour — rules that fired on correct code now stay
-      quiet, whole classes of file (HTML, TOML, `.rules`, SFCs, UTF-16) are
-      read for the first time — so nobody gets any of it until the branches are
-      merged and a `v*` tag ships them. Cutting it means 0.13.14: bump
-      `package.json` and the two root `version` fields in `package-lock.json`,
-      update the version literals the pin script checks (`README.md`,
-      `examples/*.yml`, `site/public/*.html`), let CI go green on `main`, then
-      tag — and verify the artifact, not the step, per
-      `.claude/skills/cleartoship-release`.
 - [ ] **Where the 2026-10-21 audit did not look — scope for the next one.**
       That pass went where the yield was (the walk/read layer, the dependency
       collectors, the vendored-rule guards, corpus triage of every critical on
