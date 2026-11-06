@@ -38,3 +38,26 @@ was named explicitly and confidently. GitHub's own Security Log
 (`github.com/settings/security-log`) is the durable, independent record of
 what actually got signed or logged in on this account, whatever this repo's
 own docs say happened — check it if there's ever doubt after the fact.
+
+---
+
+## Where The Logs Live
+
+**Two surfaces, and the busiest one never reaches a log.**
+
+- **Workers Logs for `cleartoship`** — on via `"observability": { "enabled": true }` in
+  `site/wrangler.jsonc`. **Search:** Cloudflare dashboard → Workers & Pages → `cleartoship` →
+  **Logs**, or `npx wrangler tail cleartoship --format pretty`. **Retention:** the plan's
+  window — no Logpush.
+  ⚠️ **It covers `/webhooks/*` and `/license/*` only.** `run_worker_first` lists exactly those
+  two prefixes, so ordinary landing-page traffic is served as a static asset and **never invokes
+  the script** — those requests are not in this log at all. The zone's Analytics is the only
+  record of them. This is also why there is no `/health` route: adding one means changing
+  `run_worker_first`, which is a routing change to test with `wrangler dev` first.
+- **D1 `cleartoship-licenses`** holds licences and Stripe webhook state. An application record,
+  not a log.
+- **The CLI and the GitHub Action** — a scan writes its findings to stdout, `--json -o <file>` or
+  `--markdown`, and **keeps no log of its own run**. Rule 7 step 17 asks a command-line tool for
+  one log file per run with private permissions; that does not exist yet.
+
+**What is not built yet** is listed under *2026-11-06 — Rule 7 step 17* in this app's `TODO.md`. Keep that list and this section in step: this is the only place that says where the logs live.

@@ -9,6 +9,11 @@
   // built-ins. Kept on so a dependency that does reach for one keeps working;
   // removing it is a behaviour change to test with `wrangler dev` first.
   "compatibility_flags": ["nodejs_compat"],
+  // Workers Logs: the request log, every console line and every uncaught
+  // exception (Rule 7 step 17). Retention is the plan's window; Logpush is
+  // the account-level action that extends it.
+  "observability": { "enabled": true },
+
   "assets": {
     "directory": "./public",
     "not_found_handling": "404-page",

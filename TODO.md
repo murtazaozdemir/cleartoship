@@ -35,6 +35,27 @@ _v0.13.0 and earlier published **unsigned** — npm's registry refuses provenanc
 from a private source repo. The repository is public now, and `release.yml`
 reads its visibility, so 0.13.1 is the first release signed with provenance._
 
+## 2026-11-06 — Rule 7 step 17: the full log
+
+From the cross-app sweep (`/Users/Shared/reusable/TODO.md`, under the Rule 7 step 17 item). What
+was done in that pass is recorded in this app's `CLAUDE.md` under **Where The Logs Live**; what is
+left is below. Retention is **not** here — it is one account action for every Worker at once,
+item 14 in `/Users/Shared/TODO.md`.
+
+- [ ] **The CLI and the Action keep no log of their own run** (Rule 7 step 17's scripts clause:
+      one log file per run, private permissions, Rule 4 step 9). A scan writes findings to stdout
+      or a file and leaves no record that it ran, with what inputs, or how long it took.
+- [ ] **Workers Logs covers `/webhooks/*` and `/license/*` only.** `run_worker_first` lists those
+      two prefixes, so landing-page traffic never invokes the script and is absent from the log.
+      Decide whether that is accepted (the zone's Analytics is the record) or whether the site
+      should route through the Worker — and write the answer down either way.
+- [ ] **No `request_id`** on the Stripe webhook → D1 → licence-signing chain, which is the path
+      where a paid licence can fail to appear.
+- [ ] **No health route, and adding one is a routing change** — it needs a `run_worker_first`
+      entry and a `wrangler dev` test, not a one-line edit (Rule 30 step 1).
+- [ ] **No `log:smoke`** proving a line appears.
+
+---
 ## Where this stands
 
 Twenty-one releases, 0.8.0 → 0.13.10. The calibration work is the point of the project
