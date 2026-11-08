@@ -604,6 +604,42 @@ overlap produced the phantom "+1 finding" from a file edited mid-scan.
 
 ## Open
 
+- **`VG010` (SQL injection risk) returned 113 findings across 11 projects and 0 true positives.**
+  Reported 2026-11-08 by a caller running the scanner over 42 projects. Every one of the 113 was
+  reviewed and recorded as a false positive; the request-reachable ones were read individually.
+  Three concrete shapes, each reproducible:
+
+  1. **A CSS selector matched as SQL.** `jobcopilot/extension/adapters/base.js:157` is
+     `copy.querySelectorAll('select, option, datalist, input, textarea, button, svg, …')` — a DOM
+     call in a browser-extension file with no database access anywhere in it. The rule appears to
+     match the keyword `select` followed by a comma-separated list. This is the sharpest case: no
+     SQL, no interpolation, no database.
+  2. **Fully literal SQL with no interpolation at all** is flagged. 9 of the 113 had no `${…}` or
+     f-string placeholder anywhere in the statement — e.g. a plain
+     `conn.execute("SELECT * FROM space_transcripts ORDER BY finished_at DESC, id DESC")`. A
+     statement with nothing interpolated cannot be an injection by construction, so this looks
+     like a cheap precondition that would remove a chunk of the noise.
+  3. **The recommended parameterised idiom is flagged.** `f"… WHERE id_str IN ({','.join('?' * n)})"`
+     with the values passed as bound parameters is the correct way to write a variadic `IN` in
+     Python, and it trips the rule because a placeholder list is interpolated. Same for
+     `f"SELECT … FROM ({MODULE_LEVEL_CONSTANT_SQL}) WHERE x = ?2"`.
+
+  The remaining true-negatives were, for the record: identifiers read from `sqlite_master`;
+  column and table names from hardcoded array literals; an `ORDER BY` whose value is a dict
+  lookup against the app's own map with a safe default (the request value is only the key); DDL,
+  which cannot take bound parameters; and an admin-gated SQL console that runs a single
+  SELECT/WITH on a read-only connection behind a SQLite authorizer allow-list.
+
+  Suggested, in order of cheapness: (a) require at least one interpolation in the matched
+  statement; (b) do not match outside a database call — a `querySelectorAll` argument is not a
+  query; (c) treat an interpolation whose text is only `?`/`$n` placeholders, or a module-level
+  constant, as not attacker-controlled. None of this needs taint analysis to help a lot.
+
+  Caveat on the sample: it is one portfolio, mostly SQLite and D1, and a rule tuned for 0 false
+  negatives will reasonably accept false positives. The number worth weighing is that at this
+  precision a reviewer stops reading the class, which is the same as the rule being off.
+
+
 - [ ] **A project with no `.gitignore` has its dependency trees scanned, and it swamps the report
       (2026-11-08).** On a Python project that is **not a git repository**, a scan reported **636
       findings inside `.venv-convert/lib/python3.12/site-packages/`** — jinja2, networkx, mpmath,
