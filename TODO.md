@@ -605,18 +605,19 @@ overlap produced the phantom "+1 finding" from a file edited mid-scan.
 ## Open
 
 - **`VG010` (SQL injection risk) returned 113 findings across 11 projects and 0 true positives.**
-  Reported 2026-11-08 by a caller running the scanner over 42 projects. Every one of the 113 was
+  Reported 2026-11-08 by a caller running the scanner over 42 projects (file paths and project names omitted — the shapes below reproduce without them). Every one of the 113 was
   reviewed and recorded as a false positive; the request-reachable ones were read individually.
   Three concrete shapes, each reproducible:
 
-  1. **A CSS selector matched as SQL.** `jobcopilot/extension/adapters/base.js:157` is
+  1. **A CSS selector matched as SQL.** A browser-extension source file, with no database access
+     anywhere in it, contains
      `copy.querySelectorAll('select, option, datalist, input, textarea, button, svg, …')` — a DOM
-     call in a browser-extension file with no database access anywhere in it. The rule appears to
+     call. It was flagged. The rule appears to
      match the keyword `select` followed by a comma-separated list. This is the sharpest case: no
      SQL, no interpolation, no database.
   2. **Fully literal SQL with no interpolation at all** is flagged. 9 of the 113 had no `${…}` or
      f-string placeholder anywhere in the statement — e.g. a plain
-     `conn.execute("SELECT * FROM space_transcripts ORDER BY finished_at DESC, id DESC")`. A
+     `conn.execute("SELECT * FROM <table> ORDER BY <col> DESC, id DESC")`. A
      statement with nothing interpolated cannot be an injection by construction, so this looks
      like a cheap precondition that would remove a chunk of the noise.
   3. **The recommended parameterised idiom is flagged.** `f"… WHERE id_str IN ({','.join('?' * n)})"`
@@ -687,7 +688,7 @@ overlap produced the phantom "+1 finding" from a file edited mid-scan.
       integrator will make first.
 
 
-- [ ] **Four findings reported from the jobcopilot audit, 2026-10-28/29** (an outside app —
+- [ ] **Four findings reported from an outside caller's audit, 2026-10-28/29** (an outside app —
       MV3 Chrome extension + local Node bridge + a Cloudflare Worker — run as
       `node dist/cli.js --offline bridge extension d1`, 99 files, 2.7s, 47 findings:
       3 critical, 27 high, 3 medium, 14 low. **All 47 were checked by hand against the source
