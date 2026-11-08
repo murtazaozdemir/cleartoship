@@ -663,7 +663,7 @@ overlap produced the phantom "+1 finding" from a file edited mid-scan.
   147 consecutive critical findings a reviewer learned to skip the severity entirely.
 
 
-- [ ] **Four findings reported from the jobcopilot audit, 2026-10-28/29** (an outside app —
+- [ ] **Four findings reported from an outside caller's audit, 2026-10-28/29** (an outside app —
       MV3 Chrome extension + local Node bridge + a Cloudflare Worker — run as
       `node dist/cli.js --offline bridge extension d1`, 99 files, 2.7s, 47 findings:
       3 critical, 27 high, 3 medium, 14 low. **All 47 were checked by hand against the source
