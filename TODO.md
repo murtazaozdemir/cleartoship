@@ -604,6 +604,53 @@ overlap produced the phantom "+1 finding" from a file edited mid-scan.
 
 ## Open
 
+- [ ] **A project with no `.gitignore` has its dependency trees scanned, and it swamps the report
+      (2026-11-08).** On a Python project that is **not a git repository**, a scan reported **636
+      findings inside `.venv-convert/lib/python3.12/site-packages/`** — jinja2, networkx, mpmath,
+      and their test fixtures. Those 636 were 48% of that session's entire output across 42
+      projects. Nothing is wrong with the findings; they are about code the user did not write and
+      cannot change.
+      **Why the existing defences missed it.** The gitignore pass is doing its job — there is no
+      `.gitignore` to read, because there is no repo. And `skippedDirs` covers `.git`, `dist` and
+      `node_modules`, which is the JavaScript shape of this problem; the Python shape is a
+      virtualenv, and a virtualenv can be named anything. `.venv` and `venv` as names would not
+      have caught `.venv-convert`, and `env` as a name is too ambiguous to skip outright (a real
+      `env/` directory of configuration source exists in the wild).
+      **The suggestion, in order of confidence:**
+      1. **`site-packages` as a path segment is never first-party**, in any project, with or
+         without a repo. This one is unconditional and would have caught all 636.
+      2. **A directory containing `pyvenv.cfg` is a virtualenv**, whatever it is named — the
+         marker is the interpreter's own, written by `venv` and `virtualenv` both. Cheap to test
+         (one `stat` per candidate directory) and it generalises past `site-packages` to the
+         `bin/`, `lib64/` and `share/` siblings.
+      3. Same idea for the other ecosystems' equivalents if it is wanted: `vendor/bundle`,
+         `.tox`, `.nox`.
+      A caller can filter this out afterwards — that is what the one who found it did — but every
+      caller then needs its own copy of the knowledge, and the `fileCount` and `--fix-prompt`
+      output stay wrong regardless. This looks like it belongs in the walker.
+      Reproducing it needs nothing exotic: `python3 -m venv .venv-convert` in a directory with no
+      `.git`, install anything, scan.
+
+- [ ] **`(id, file, line)` does not uniquely identify a finding, and nothing in `--json` says so
+      (2026-11-08).** `CTS031` appears twice at `test/scan.test.js:643` in this repository's own
+      tree, in one run. **They are not a duplicate emission — they are two real, different
+      findings**: one for `NEXT_PUBLIC_OPENAI_API_KEY`, one for `NEXT_PUBLIC_MAPS_SECRET_TOKEN`,
+      two variables on the same line of the same fixture. Both deserve to be reported.
+      The problem is downstream. `(id, file, line)` is the obvious key for a caller tracking
+      findings across runs — to tell a new finding from one it has already seen or already
+      decided about — and on that key these two findings are the same object. A caller that keys
+      on it silently keeps one and loses the other, and the one it loses is a secret exposure.
+      (Measured, not supposed: the caller that found this did exactly that, and dropped one of
+      the two.)
+      Nothing in the JSON currently distinguishes them except `title` and `detail`, which are
+      prose and not meant to be keys. Options, cheapest first: a **column** alongside `line`; a
+      **per-finding ordinal** within a (id, file, line) group; or an explicit stable
+      **`fingerprint`** field the output documents as the identity of a finding, which also gives
+      SARIF's `partialFingerprints` something to carry. Whichever it is, it is worth saying in the
+      docs that `(id, file, line)` is *not* an identity, because that is the assumption every
+      integrator will make first.
+
+
 - [ ] **Four findings reported from the jobcopilot audit, 2026-10-28/29** (an outside app —
       MV3 Chrome extension + local Node bridge + a Cloudflare Worker — run as
       `node dist/cli.js --offline bridge extension d1`, 99 files, 2.7s, 47 findings:
