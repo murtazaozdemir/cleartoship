@@ -182,7 +182,7 @@ function looksLikeSecretValue(match: string): boolean {
   if (/[.!?]$/.test(trimmed) && trimmed.includes(' ')) return false;
   // `password="[REDACTED]"` is what a log *sanitizer* writes — this fired on
   // the replacement string of a redaction helper, reported critical.
-  if (/^\[[^\[\]]+\]$/.test(trimmed)) return false;
+  if (/^\[[^[\]]+\]$/.test(trimmed)) return false;
   if (/\b(?:REDACTED|MASKED|FILTERED|SANITIZED|CENSORED)\b/.test(trimmed)) return false;
   // A password hash is a verifier, not a credential: presenting it does not
   // authenticate anybody. `DUMMY_PASSWORD_HASH = '$2b$12$…'` — the standard
