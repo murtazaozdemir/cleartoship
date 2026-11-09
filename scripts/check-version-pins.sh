@@ -21,7 +21,7 @@ pattern='(cleartoship@|cleartoship/releases/download/|class="pill">)v[0-9]+\.[0-
 bad=$(grep -ohE "$pattern" "${files[@]}" \
       | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | sort -u | grep -vx "v${ver}" || true)
 if [ -n "$bad" ]; then
-  echo "::error::docs name $(echo $bad) but package.json declares v${ver}"
+  echo "::error::docs name $(echo "$bad") but package.json declares v${ver}"
   grep -nE "$pattern" "${files[@]}" | grep -v "v${ver}" || true
   exit 1
 fi
