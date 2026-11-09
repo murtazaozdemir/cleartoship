@@ -319,7 +319,7 @@ export function renderFixPrompt(scan: FullScan): string {
     lines.push(`## ${sev.toUpperCase()} (${group.length})`);
     lines.push('');
     group.forEach((f, i) => {
-      lines.push(`### ${i + 1}. ${oneLine(f.title).replace(/[`*_#\[\]]/g, '')} (rule ${oneLine(f.id).replace(/[^A-Za-z0-9_.-]/g, '')})`);
+      lines.push(`### ${i + 1}. ${oneLine(f.title).replace(/[`*_#[\]]/g, '')} (rule ${oneLine(f.id).replace(/[^A-Za-z0-9_.-]/g, '')})`);
       lines.push('');
       if (f.file) {
         lines.push('Location (untrusted):');
