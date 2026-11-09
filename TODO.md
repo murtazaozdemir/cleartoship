@@ -1025,3 +1025,4 @@ Written by `bugdetect`, which audits this app from /Users/Shared/bugdetector.
 Each line is a machine-made change or a recorded decision, not a task.
 
 - 2026-11-09 — oxlint safe-fix applied by bugdetect to 2 file(s): src/scanners/dependencies.ts, src/scanners/server-actions.ts. 5 finding(s) were open in them (eslint(no-unused-vars), unicorn(no-new-array), unicorn(prefer-string-starts-ends-with)); which closed is settled by the next audit run. Not verified against this app's tests.
+- 2026-11-09 — oxlint safe-fix applied by bugdetect to 5 file(s): src/scanners/auth-helpers.ts, src/utils/ast.ts, src/utils/modules.ts, src/utils/redact.ts, test/rules-audit.test.js. 5 finding(s) were open in them (unicorn(prefer-string-starts-ends-with)); which closed is settled by the next audit run. Not verified against this app's tests.

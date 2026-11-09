@@ -136,7 +136,7 @@ export function parseSourceDetailed(code: string, filename: string): ParseOutcom
 
 function parseUnrecorded(code: string, filename: string): ParseOutcome {
   const isTs = /\.(ts|tsx|mts|cts)$/.test(filename);
-  const isTsx = /\.tsx$/.test(filename);
+  const isTsx = filename.endsWith('.tsx');
   const base: any[] = [
     'decorators-legacy',
     'classProperties',

@@ -160,7 +160,7 @@ function callNamesIn(node: any, out: Set<string>, depth = 0, receiverOf: WeakMap
         const tail = calleeTail(callee);
         if (tail !== full) out.add(TAIL + tail);
       }
-      if (/headers\.get$/.test(full)) {
+      if (full.endsWith('headers.get')) {
         const arg = node.arguments?.[0];
         if (arg?.type === 'StringLiteral' && CREDENTIAL_HEADERS.test(arg.value)) {
           out.add(MARK_CREDENTIAL_HEADER);

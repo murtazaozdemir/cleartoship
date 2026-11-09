@@ -53,7 +53,7 @@ const ENV_ASSIGNMENT = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${SECRET_NAME}[ \\t
 /** Files where `NAME=value` with no quotes is an assignment. */
 function envStyle(file: string): boolean {
   const base = basename(file);
-  return /^\.env/.test(base) || /\.(env|toml|ya?ml|tfvars|properties|ini|cfg|conf)$/i.test(base) || base === '.npmrc';
+  return base.startsWith('.env') || /\.(env|toml|ya?ml|tfvars|properties|ini|cfg|conf)$/i.test(base) || base === '.npmrc';
 }
 
 /** Gitleaks rules that match things which are not credentials often enough to hurt snippets. */

@@ -46,7 +46,7 @@ export function buildModuleIndex(files: string[], root: string): ModuleIndex {
     if (!isScript(file)) continue;
     const noExt = stripExt(file);
     byAbs.set(noExt, file);
-    if (/\/index$/.test(noExt)) byAbs.set(noExt.slice(0, -'/index'.length), file);
+    if (noExt.endsWith('/index')) byAbs.set(noExt.slice(0, -'/index'.length), file);
 
     const relNoExt = stripExt(rel(root, file));
     const segments = relNoExt.split('/');

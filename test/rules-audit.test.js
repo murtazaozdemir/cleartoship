@@ -209,7 +209,7 @@ test('VG061 on its own trigger repeated over 1 MB no longer needs the safety net
   assert.ok(Date.now() - t < 60_000, `took ${Date.now() - t} ms`);
   assert.equal(byId(result, 'VG014').length, 1, 'the other rules still read the whole file');
   assert.ok(
-    !result.incomplete.some((r) => /^VG061 /.test(r)),
+    !result.incomplete.some((r) => r.startsWith('VG061 ')),
     `VG061 finished: ${JSON.stringify(result.incomplete)}`,
   );
 });
