@@ -1148,7 +1148,7 @@ function analyseFunction(
     for (const arg of inner.node.arguments ?? []) {
       if (arg?.type !== 'StringLiteral') continue;
       if (SIGNATURE_HEADERS.test(arg.value)) info.hasSignatureCheck = true;
-      if (CREDENTIAL_HEADERS.test(arg.value) && /headers\.get$/.test(full)) {
+      if (CREDENTIAL_HEADERS.test(arg.value) && full.endsWith('headers.get')) {
         info.readsCredentialHeader = true;
       }
     }
@@ -1196,7 +1196,7 @@ function analyseFunction(
     },
     MemberExpression(inner: any) {
       const full = calleeName(inner.node);
-      if (/headers\.get$/.test(full) || full.endsWith('CRON_SECRET')) info.readsAuthHeader = true;
+      if (full.endsWith('headers.get') || full.endsWith('CRON_SECRET')) info.readsAuthHeader = true;
       if (SECRET_ENV.test(full)) info.readsSecretEnv = true;
       // `parsed.isValidSignature` — an SDK hands back the verdict as a property.
       if (STRONG_SIGNATURE_NAME.test(calleeTail(inner.node))) info.verifiesSignature = true;
@@ -1597,7 +1597,7 @@ function isGuestFlowCall(full: string, tail: string): boolean {
     return segs.length >= 2 && ACCOUNT_TABLE.test(tableKey(segs[segs.length - 2]!));
   }
   // Drizzle's `db.update(users).set({...})`: the update itself is judged as a write.
-  if (tail === 'set') return /\.update\.set$/.test(full);
+  if (tail === 'set') return full.endsWith('.update.set');
   return GUEST_FLOW_TAILS.has(tail);
 }
 

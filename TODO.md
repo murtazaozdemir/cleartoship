@@ -1018,3 +1018,10 @@ Second most useful: a **missed finding**, with the code it should have caught.
 New rules are welcome, but the bar is deliberately high — a rule that cannot
 name a specific wrong thing a developer would act on does not go in, however
 well it maps to a compliance table.
+
+## Audit trail — bugdetect
+
+Written by `bugdetect`, which audits this app from /Users/Shared/bugdetector.
+Each line is a machine-made change or a recorded decision, not a task.
+
+- 2026-11-09 — oxlint safe-fix applied by bugdetect to 2 file(s): src/scanners/dependencies.ts, src/scanners/server-actions.ts. 5 finding(s) were open in them (eslint(no-unused-vars), unicorn(no-new-array), unicorn(prefer-string-starts-ends-with)); which closed is settled by the next audit run. Not verified against this app's tests.

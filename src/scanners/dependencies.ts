@@ -80,7 +80,7 @@ function collectFromPyproject(source: string, relPath: string): Declared[] {
   let inlineArray = false; // opened by `dependencies = [` inside [project]
   lines.forEach((raw, i) => {
     const line = raw.trim();
-    if (/^\[/.test(line)) {
+    if (line.startsWith('[')) {
       // `tool.poetry.group.<name>.dependencies` is where Poetry ≥1.2 puts every
       // non-default group, and `[dependency-groups]` is PEP 735 — the table uv
       // writes dev dependencies to. Neither was matched, so a hallucinated or
@@ -95,7 +95,7 @@ function collectFromPyproject(source: string, relPath: string): Declared[] {
     if (/^dependencies\s*=\s*\[/.test(line)) {
       inDeps = true;
       inlineArray = true;
-    } else if (inlineArray && /^\]/.test(line)) {
+    } else if (inlineArray && line.startsWith(']')) {
       // The array is closed; `requires-python = ">=3.11"` below it is not a dependency.
       inDeps = false;
       inlineArray = false;
@@ -148,7 +148,7 @@ function pyprojectName(source: string): string | null {
   let inProject = false;
   for (const raw of source.split('\n')) {
     const line = raw.trim();
-    if (/^\[/.test(line)) {
+    if (line.startsWith('[')) {
       inProject = /^\[(project|tool\.poetry)\]/.test(line);
       continue;
     }
