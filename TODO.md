@@ -776,6 +776,25 @@ repo is private*. It is not.
   shipped ignore file, would fix it for this repo and for any user who vendors fixtures the same
   way — and it is the first thing a new user scanning a security tool's own repo would hit.
 
+  **Re-measured 2026-11-12, and the diagnosis has changed — this is now a half-applied
+  mechanism, not a missing one.** `src/utils/paths.ts` already does what the entry above asked
+  for: `pathClass` returns `non-production` for `tests?|specs?|fixtures?|mocks?|__tests__|
+  examples?|docs?|demo|samples?|testdata` and the Go/pytest spellings, and `adjustForPath` forces
+  those to `low` with the reason stated in the finding rather than suppressing it — the demote,
+  don't-exclude choice the entry below recommends. So the leverage item is built. What is not
+  built is applying it everywhere: **`adjustForPath` is called by 4 scanners
+  (`community.ts`, `rls.ts`, `logic.ts`, `agent-logic.ts`) and by none of `server-actions.ts`,
+  `secrets.ts`, `dependencies.ts` or `auth-helpers.ts`.** A self-scan (`node dist/cli.js --json
+  --offline .`) returns 203 findings, of which 187 are `low` and **all 16 that are not are inside
+  `test/fixtures/vulnerable-app/`**: 8 critical (`CTS003`, `CTS001` x3, `CTS042`, `CTS033`,
+  `CTS028`), 6 high (`CTS002` x2, `CTS043` x2, `CTS041`, `CTS046`), 2 medium (`CTS004`,
+  `CTS044`). None of the 16 carries the path note, which is the tell: the adjustment never ran
+  for them. Eleven distinct rules, and every one of them is owned by a scanner that skips the
+  call. `CTS028` may be a deliberate exemption — the `paths.ts` doc comment says `CTS024` does
+  its own ships-vs-dev-only separation for dependency CVEs — so that one needs a decision rather
+  than a call added. The fix is a severity change in shipped output, so it goes through the
+  calibration bar in the release skill rather than in passing.
+
 
 - **Two critical rules, 147 findings, 0 true positives — the pattern, not just the rules.**
   Reported 2026-11-08 by the same caller running the scanner over 42 projects. `VG010` (113,
