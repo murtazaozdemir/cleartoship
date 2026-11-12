@@ -57,7 +57,7 @@ jobs:
       - name: Docs must pin this version
         run: scripts/check-version-pins.sh
 
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm test
       # The fixtures under test/ are intentionally vulnerable; everything else

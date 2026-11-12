@@ -44,7 +44,7 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: site/package-lock.json
-      - run: npm ci
+      - run: npm ci --ignore-scripts
 
       # Fail here, loudly, rather than at the deploy step with a wall of output.
       # A token missing "Workers Scripts: Edit" is the likely cause.
@@ -195,7 +195,10 @@ jobs:
         run: |
           want=$(grep ' cleartoship.mjs$' public/SHA256SUMS | cut -d' ' -f1)
           got=""
-          for attempt in 1 2 3 4 5 6; do
+          # `_`, not `attempt`: this loop never reads the counter (the other
+          # two in this file do), and naming it tripped SC2034 on every
+          # actionlint run, which buries a real warning when one shows up.
+          for _ in 1 2 3 4 5 6; do
             got=$(curl -fsSL -H 'Cache-Control: no-cache' https://cleartoship.app/cleartoship.mjs | sha256sum | cut -d' ' -f1 || true)
             if [ "$got" = "$want" ]; then
               echo "::notice::cleartoship.app/cleartoship.mjs matches the release asset (sha256 $want)."

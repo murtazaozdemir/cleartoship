@@ -29,7 +29,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       - run: npm test
 
@@ -43,7 +43,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
+      - run: npm ci --ignore-scripts
       - run: npm run build
       # Everything except the fixtures under test/, which are deliberately
       # vulnerable. Listed explicitly rather than scanning `src` alone: the
@@ -87,3 +87,27 @@ jobs:
       # Reads the git index, so a gitignored local file cannot fail the gate.
       - name: No new source file over 500 lines, and no allowlisted file grew
         run: scripts/check-file-sizes.sh
+
+  # VG1070. `--ignore-scripts` on every `npm ci` above closes the install-script
+  # path; this job checks the other half of the same question -- that what came
+  # down the wire is what the publisher signed.
+  #
+  # Online and third-party on purpose: it reaches registry.npmjs.org and
+  # Sigstore's TUF root (tuf-repo-cdn.sigstore.dev). A Sigstore outage therefore
+  # fails this job, the same trade the self-scan already makes with npm and OSV.
+  # Re-run it rather than deleting the step: a check that cannot verify is not a
+  # check that passed. Measured 2026-11-12: 29 of 29 packages have verified
+  # registry signatures and 16 carry attestations.
+  supply-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Every dependency must carry a verified registry signature
+        run: npm audit signatures

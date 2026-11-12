@@ -730,6 +730,49 @@ it would quietly break any branch protection requiring it. `actionlint` passes;
 the self-scan over `scripts/` and `.github/` is clear; the suite is unchanged
 at 228 tests.
 
+**2026-11-12 — `VG1070` is closed for real, and the plan for it was wrong in
+two places.** All four `npm ci` steps now carry `--ignore-scripts`
+(`ci.yml:32`, `ci.yml:46`, `deploy-site.yml:47`, `release.yml:60`), so the
+finding that was `waived` last week is now `fixed`: a self-scan of `.github`
+returns **0** `VG1070` findings, and the whole-repo self-scan dropped from five
+low notes to one.
+
+The entry that planned this said `--expect-provenance` was "the cheap half" and
+should go first. **There is no such npm flag.** `npm config get
+expect-provenance` returns `undefined`, it appears nowhere in `npm help ci`, and
+npm accepts it silently and exits 0 — so shipping it would have been a flag that
+looks like supply-chain hardening and verifies nothing, which is worse than not
+having it. The mechanism that does exist is `npm audit signatures`, now its own
+`supply-chain` job: measured here, **29 of 29 packages have verified registry
+signatures and 16 carry attestations**. It reaches `registry.npmjs.org` and
+Sigstore's TUF root, so a Sigstore outage fails that job — the same trade the
+self-scan already makes with npm and OSV, and the comment says to re-run rather
+than delete the step.
+
+The entry was also wrong about the risk: it said `esbuild`'s platform binary
+comes through an install script and that the bundle had to be proven first.
+Proven, and the premise no longer holds — esbuild 0.28 ships
+`@esbuild/darwin-x64` as an *optional dependency*, not a postinstall download.
+A clean `git archive` of HEAD with `npm ci --ignore-scripts` ran `npm run build`
+and `npm run bundle` to a 2,324 KB standalone bundle, and the suite there passed
+identically. `deploy-site.yml` was the one worth being careful with, since
+breaking it stops the site updating: `wrangler` 4.135.0 installs and reports its
+version under `--ignore-scripts`, with `workerd-darwin-64` arriving the same
+optional-dependency way.
+
+Two smaller things fixed alongside, both in CI's own output rather than in what
+ships. `check-version-pins.sh` built its `::error::` annotation from a
+newline-separated list, and GitHub renders only the *first* line of an
+annotation — so with three wrong versions in the docs it showed
+`docs name v0.7.1` and silently dropped the other two *and* the "but
+package.json declares" clause, the half of the sentence saying what the right
+answer is. Reproduced on a fixture before the fix and after: it is now one line
+naming all three. And `deploy-site.yml`'s third retry loop named a counter it
+never read, which tripped `SC2034` on every `actionlint` run; renamed to `_`,
+so `actionlint` is now clean across all four workflows and a real warning will
+not be buried under a known one. The other two loops do read their counter and
+were left alone.
+
 ## Open
 
 - **Extract the regex engine out of `community.ts` as a planned refactor.**
@@ -743,17 +786,6 @@ at 228 tests.
   old import paths kept working — not done in passing. Note `PATTERN_FIXES`,
   `PATTERN_OVERRIDES` and `MATCH_GUARDS` stay on the ruleset side of the line;
   they are calibration, not engine.
-
-- **Harden the four CI `npm ci` steps (`VG1070`), in the order the risk
-  allows.** `--expect-provenance` is the cheap half and nothing in this repo
-  depends on install scripts for it to work, so it can go first.
-  `--ignore-scripts` is the half that matters more and needs a test:
-  `esbuild`'s platform binary comes through an install script, and
-  `release.yml` runs `npm run bundle`, so prove the bundle still builds before
-  the flag lands — the mitigation that makes this a `waived` rather than an
-  open hole (credentials kept out of the steps where `npm ci` runs) stays
-  either way. Sites: `ci.yml:32`, `ci.yml:46`, `deploy-site.yml:47`,
-  `release.yml:60`.
 
 - **The whole `critical` tier, walked: 233 findings, 2 real (0.9%).** Reported 2026-11-08 by the
   caller running the scanner over 42 projects, who decided every one with a written reason.
