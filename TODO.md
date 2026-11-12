@@ -773,6 +773,47 @@ so `actionlint` is now clean across all four workflows and a real warning will
 not be buried under a known one. The other two loops do read their counter and
 were left alone.
 
+**2026-11-12 — a live-route XSS was being reported at `low`, and the item that found it was
+pointing the wrong way.** The open item above proposed wiring `adjustForPath` into the four
+scanners that skip it (`server-actions.ts`, `secrets.ts`, `dependencies.ts`,
+`auth-helpers.ts`). Taking it through the calibration bar killed the idea and surfaced a real
+defect underneath it.
+
+`pathClass` classified any path containing a `docs/`, `examples?/`, `demo/`, `samples?/` or
+`stories/` directory as `non-production`, which forces the severity to `low`. In Next.js those
+are **route segments**: `app/docs/page.tsx` is the page served at `/docs`. Measured on a
+two-file project with the identical `dangerouslySetInnerHTML` sink in each file:
+`app/billing/page.tsx` reported `VG012` at **high**, `app/docs/page.tsx` reported it at **low**,
+with the note *"Path looks like tests, fixtures or docs, so the severity is reduced."* Same for
+an unauthenticated destructive Server Action: `critical` in `app/billing/`, and it would have
+dropped to `low` in `app/docs/` the moment `server-actions.ts` started calling the helper. That
+is the worst failure this scanner has available — not a false alarm someone argues with, but a
+real one they never see, carrying a sentence that explains why it was quiet.
+
+So the directory markers are split rather than extended. `NON_PRODUCTION_STRONG` keeps the ones
+that mean the same thing anywhere — the `tests?`/`specs?`/`e2e`/`fixtures?`/`mocks?` family with
+its affixes, `__tests__`, `cypress`, `playwright`, `testdata`, Go's `_test.go` and `testdata/`,
+pytest's `test_*.py`/`conftest.py`, and the `.test.`/`.spec.`/`.stories.`/`.fixture.` **file**
+suffixes. `NON_PRODUCTION_WEAK` holds the ambiguous directory names, and a weak marker loses to
+`ROUTE_ROOT` (`^(src/)?(app|pages)/`). A `*.stories.tsx` file stays non-production wherever it
+sits, because the file suffix is reliable even where the directory name is not; `demo-billing/`
+was already production and still is.
+
+`test/path-class-route-roots.test.js`, 6 tests. It was run against the pre-fix build first and
+**3 of the 6 fail there**, which is the only evidence that a regression test is testing
+anything; the other 3 are the regression guards for behaviour that had to stay put. It asserts
+values rather than the absence of the worst case — `adjustForPath('critical',
+'app/docs/actions.ts').severity === 'critical'` and an empty note, not `notEqual(..., 'low')` —
+because this repo already lost a year to a CVSS assertion that only ruled out `low`. The
+existing `pathClass` block in `test/scan.test.js` passes untouched, including
+`app/e2e-tests/login.ts`, `src/app/api/document-samples/route.ts` and
+`src/features/demo-billing/index.ts`. Suite 234 tests, self-scan unchanged at one low note.
+
+One thing this did not change and is worth stating: the repo's own
+`test/fixtures/vulnerable-app/` holds a full deliberately-vulnerable `app/` tree, and it still
+classifies `non-production` — the strong marker matches first, before the route root is ever
+consulted. A fixture tree is not anybody's route.
+
 ## Open
 
 - **Extract the regex engine out of `community.ts` as a planned refactor.**
@@ -847,6 +888,18 @@ were left alone.
   its own ships-vs-dev-only separation for dependency CVEs — so that one needs a decision rather
   than a call added. The fix is a severity change in shipped output, so it goes through the
   calibration bar in the release skill rather than in passing.
+
+  **Taken through that bar the same day, and the premise turned out to be backwards — see the
+  narrative entry above.** Wiring `adjustForPath` into the remaining four scanners would have
+  introduced a false negative worse than the noise it removed, because the demotion was already
+  too aggressive: `pathClass` read `app/docs/`, `app/examples/`, `app/demo/` and `pages/docs/` as
+  `non-production`, and in Next.js those are **routes**. Fixed in the other direction instead.
+  What is still genuinely open here is the narrower question this started from — whether the four
+  scanners should call `adjustForPath` at all now that the classifier is safe on route roots. The
+  argument for it is consistency; the argument against is that a fixture tree is the only place
+  it would change anything in this repo, and `test/fixtures/` is better served by the default
+  exclusion discussed above than by demoting eleven rules one at a time. `CTS028` still needs a
+  decision rather than a call added.
 
 
 - **Two critical rules, 147 findings, 0 true positives — the pattern, not just the rules.**
