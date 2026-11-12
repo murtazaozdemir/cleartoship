@@ -694,22 +694,43 @@ the rule at the top of `CLAUDE.md` forbids writing down here at all. The auditor
 had this backwards — it warned that the brief needed gitignoring *because this
 repo is private*. It is not.
 
-## Open
+**2026-11-12 — Rule 26 step 6 is now built, and the ratchet is the point.**
+`scripts/check-file-sizes.sh` plus a checked-in ceiling table
+(`scripts/file-size-ceilings.txt`), wired into `ci.yml` as its own
+`file-sizes` job. It fails on two things: a tracked source file crossing 500
+lines that is not on the allowlist, and an allowlisted file growing past the
+size it was pinned at. Thirteen files are pinned — the ten `src/` ones the
+auditor found, plus `test/scan.test.js` (1,424), `test/audit-core.test.js`
+(509) and `site/public/index.html` (520), which the auditor had also reported
+and which were waived rather than measured. `community.ts` went on the list at
+**3,049**, not the 2,968 recorded a few paragraphs above: the VG530 fix added
+85 lines, which is exactly the creep this gate exists to catch.
 
-- **Rule 26 step 6 is half-built: the 500-line check and its ceiling allowlist
-  don't exist.** Ten files are over the line (`community.ts` 2,968,
-  `server-actions.ts` 2,238, `rls.ts` 1,249, `dependencies.ts` 1,074,
-  `auth-helpers.ts` 1,048, `agent-logic.ts` 939, `secrets.ts` 815,
-  `gitignore.ts` 757, `files.ts` 591, `report.ts` 571) and nothing stops an
-  eleventh, or stops these ten growing. Step 6 asks for both halves: a check
-  that fails on a *new* file over 500 lines, and an allowlist pinning the
-  existing ones at their current size as a ceiling so they can shrink but not
-  grow. The allowlist is the part that makes it adoptable today — a bare check
-  would be red on arrival and get ignored — the always-red-gate failure mode
-  another app in this portfolio pinned its dependency-audit gate at `critical`
-  to avoid.
-  Cheap: a script in `scripts/`, a step in `ci.yml` beside
-  `check-version-pins.sh`, and a checked-in table of ten names and sizes.
+All four behaviours were proven rather than assumed, by making the check fail
+on purpose: a new 501-line file errors and exits 1; appending 20 lines to
+`report.ts` errors with `grew to 591 lines, past its ceiling of 571` and exits
+1; cutting `report.ts` to 520 emits a `::notice::` asking for the ceiling to be
+tightened and still exits 0; and a row for a file that does not exist emits a
+notice to drop it. The last two are what keeps the list from rotting — good
+news must not turn the gate red, which is the always-red-gate failure mode
+another app in this portfolio pinned its dependency-audit gate at `critical` to
+avoid, but it must not be silent either.
+
+Scope is the git index, so a gitignored file cannot fail the gate. That is
+deliberate and it resolves a disagreement with the auditor: it had reported
+`marketing.html` (588 lines, gitignored) and 27 oxlint/size/deps findings
+inside `standalone/` (a 2.3MB generated esbuild bundle, also gitignored) as
+open findings against this app. Neither is hand-written and neither ships from
+this tree. `src/vendor/` is excluded for a different reason — it is a faithful
+copy of upstream and re-vendoring is a straight overwrite, so splitting it is
+not an available move — and `test/fixtures/` because its shape is dictated by
+what the rules must detect. A new job was added rather than a step inside
+`version-consistency`, because that job's name is a status check and renaming
+it would quietly break any branch protection requiring it. `actionlint` passes;
+the self-scan over `scripts/` and `.github/` is clear; the suite is unchanged
+at 228 tests.
+
+## Open
 
 - **Extract the regex engine out of `community.ts` as a planned refactor.**
   About 1,400 of its 2,968 lines are the pattern parser, the compiler and the

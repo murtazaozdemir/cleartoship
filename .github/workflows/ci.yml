@@ -74,3 +74,16 @@ jobs:
       # README.md, examples/*.yml and the landing page (site/public/*.html).
       - name: Docs must pin the version this repo declares
         run: scripts/check-version-pins.sh
+
+  # Rule 26 step 6. A separate job rather than a step in version-consistency:
+  # that job's name is a status check and renaming it would quietly break any
+  # branch protection that requires it.
+  file-sizes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Reads the git index, so a gitignored local file cannot fail the gate.
+      - name: No new source file over 500 lines, and no allowlisted file grew
+        run: scripts/check-file-sizes.sh

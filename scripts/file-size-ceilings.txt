@@ -1,0 +1,30 @@
+# Rule 26 step 6: files already over the line, pinned at their current size.
+#
+# One `<lines> <path>` per row. A file listed here may SHRINK but not GROW --
+# `check-file-sizes.sh` fails if it exceeds its ceiling, and fails on any file
+# not listed here that crosses 500 lines. That is the whole point: the ten
+# scanners below are not getting smaller today, but nothing new joins them and
+# none of them creeps.
+#
+# Shrinking a file below its ceiling is good news, not a failure: the check
+# says so and asks you to tighten the number here (or `--update` does it).
+# Drop the row entirely once a file is back under 500.
+#
+# Measured 2026-11-12. Each of these is one responsibility -- one scanner per
+# file, one report renderer, one file-walk helper, one gitignore matcher -- so
+# none is a Rule 26 step 1 violation; see TODO.md for why they are not being
+# split, and for the planned exception (the regex engine inside community.ts,
+# which is a genuine second section and is tracked as a step 7 refactor).
+3049 src/scanners/community.ts
+2238 src/scanners/server-actions.ts
+1424 test/scan.test.js
+1249 src/scanners/rls.ts
+1074 src/scanners/dependencies.ts
+1048 src/scanners/auth-helpers.ts
+939 src/scanners/agent-logic.ts
+815 src/scanners/secrets.ts
+757 src/utils/gitignore.ts
+591 src/utils/files.ts
+571 src/report.ts
+520 site/public/index.html
+509 test/audit-core.test.js
