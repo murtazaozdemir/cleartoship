@@ -5,7 +5,7 @@ import { queryOsv, severityForVulnerability } from '../utils/osv.js';
 import type { OsvQuery } from '../utils/osv.js';
 import { POPULAR_NPM, POPULAR_PYPI, nearestPopular } from '../data/popular.js';
 import { emptyResult } from '../types.js';
-import type { Finding, ProjectContext, ScanResult, Scanner } from '../types.js';
+import type { Finding, ScanResult, Scanner } from '../types.js';
 
 const NEW_PACKAGE_DAYS = 60;
 const LOW_DOWNLOADS = 250;

@@ -634,7 +634,105 @@ is 228 tests, 219 passing, the 9 failures all pre-existing `EPERM` on `.env`
 fixtures from this session's sandbox (identical 9 on a stashed tree). Self-scan
 unchanged: 🟢, 68 files, 5 low-priority notes.
 
+**2026-11-12 — the portfolio auditor's 21 open findings on this repo, judged.**
+Nobody had ever said whether they were real; the ledger could not tell an
+undecided finding from an unseen one, so all 21 were being re-raised every run.
+Five classes. **Seven were real and are fixed**: five dead `import type` names
+(six, in fact — `secrets.ts` had both `Finding` and `ProjectContext` dead while
+the finding named only the first), each verified to occur exactly once in its
+file with no `export type` re-export, which is the check `HANDOFF.md` demands
+before touching an unused-import finding; and one `SC2116`, the useless
+`$(echo "$bad")` in `check-version-pins.sh:24`, replaced with `${bad}` after
+running the failure branch against a two-mismatch fixture and getting
+byte-identical output and the same exit 1. That one had already survived an
+automated shellcheck safe-fix pass on the same file (`4f0b4fc`), so the
+autofixer saw it and left it. The `unpushed-commits` finding was accurate and is
+resolved: those five were the automated safe-fix commits, each of which said in
+its own message that it was *not* verified against this app's tests, and they
+went out with the VG530 fix after the suite had been run over all of them
+together. All three went back as **re-check requests** rather than as `fixed`
+claims, which is what that ledger accepts — a self-reported fix is refused there
+by design, and it once recorded two live critical secrets as fixed because the
+file had merely been gitignored.
+
+`VG1070` (four `npm ci` steps with no `--ignore-scripts` / `--expect-provenance`)
+is **accurate and waived, not dismissed**. What a dependency's install script can
+do is bounded by what it can reach, and both workflows holding a credential
+already keep it away from `npm ci` on purpose: `release.yml` splits into a build
+job with a read-only token and a publish job that never checks out repository
+code, and `deploy-site.yml` keeps the Cloudflare token out of job-level env for
+the same stated reason. The flag is still worth adding and is below — but it is
+not the one-liner the finding implies, because `esbuild`'s platform binary
+arrives through an install script and `npm run bundle` has to be proven to still
+work first. Shipping a release that cannot bundle is worse than the risk it
+closes.
+
+**The `over-500-lines` class is the one where reading the rule changed the
+answer.** Ten files, cited as `Rule 26 step 6`, and the citation is exactly
+right — step 6 *is* "a check lists source files over 500 lines and fails on any
+new one, and files already over the line go on an allowlist with their current
+size as a ceiling". So the findings are the first half of a rule this repo has
+only half of, and the remedy is the ratchet, not ten splits: step 1 says files
+are split by responsibility and the line count is only the smoke alarm, and nine
+of the ten are one responsibility each (one scanner per file, one report
+renderer, one file walk, one gitignore matcher) with none of step 1's triggers
+firing. The row was **split**, because the tenth is real on step 1's own terms:
+`community.ts` is 2,968 lines holding two unrelated jobs, and about 1,400 of
+them are a general-purpose regex engine — pattern parser, compiler, and a
+backtracking matcher that memoises failed `(state, position)` pairs — which
+knows nothing about security rules and has its own narrow surface
+(`matcherFor`, `linearInIrregexp`, `LinearMatcher`) already covered by its own
+test file. Both halves went back as `open` with their reasons rather than
+`waived`: waiving records acceptance, and neither is accepted. Both are below.
+
+The judgement trail is `AUDIT-REPLY.json`, committed. `AUDIT-BRIEF.md` is
+gitignored and must stay that way — it lists the file and line of every unfixed
+finding here, and **this repo is public**, which makes it a map worth more to
+someone hostile than the findings are. The auditor's own notices get the same
+treatment for a different reason: they quote other, private apps by name, which
+the rule at the top of `CLAUDE.md` forbids writing down here at all. The auditor
+had this backwards — it warned that the brief needed gitignoring *because this
+repo is private*. It is not.
+
 ## Open
+
+- **Rule 26 step 6 is half-built: the 500-line check and its ceiling allowlist
+  don't exist.** Ten files are over the line (`community.ts` 2,968,
+  `server-actions.ts` 2,238, `rls.ts` 1,249, `dependencies.ts` 1,074,
+  `auth-helpers.ts` 1,048, `agent-logic.ts` 939, `secrets.ts` 815,
+  `gitignore.ts` 757, `files.ts` 591, `report.ts` 571) and nothing stops an
+  eleventh, or stops these ten growing. Step 6 asks for both halves: a check
+  that fails on a *new* file over 500 lines, and an allowlist pinning the
+  existing ones at their current size as a ceiling so they can shrink but not
+  grow. The allowlist is the part that makes it adoptable today — a bare check
+  would be red on arrival and get ignored — the always-red-gate failure mode
+  another app in this portfolio pinned its dependency-audit gate at `critical`
+  to avoid.
+  Cheap: a script in `scripts/`, a step in `ci.yml` beside
+  `check-version-pins.sh`, and a checked-in table of ten names and sizes.
+
+- **Extract the regex engine out of `community.ts` as a planned refactor.**
+  About 1,400 of its 2,968 lines are the pattern parser, the compiler and the
+  linear-time backtracking matcher, which exist to run *arbitrary* patterns
+  without super-linear blowup and know nothing about the GuardVibe ruleset they
+  sit beside. Rule 26 step 1's "distinct sections" trigger, and the extraction
+  is natural: the surface other code uses is `matcherFor`, `linearInIrregexp`
+  and `LinearMatcher`, already exercised by `test/redos-overrides.test.js`.
+  Rule 26 step 7 governs how: a planned pass, in batches, suite run after each,
+  old import paths kept working — not done in passing. Note `PATTERN_FIXES`,
+  `PATTERN_OVERRIDES` and `MATCH_GUARDS` stay on the ruleset side of the line;
+  they are calibration, not engine.
+
+- **Harden the four CI `npm ci` steps (`VG1070`), in the order the risk
+  allows.** `--expect-provenance` is the cheap half and nothing in this repo
+  depends on install scripts for it to work, so it can go first.
+  `--ignore-scripts` is the half that matters more and needs a test:
+  `esbuild`'s platform binary comes through an install script, and
+  `release.yml` runs `npm run bundle`, so prove the bundle still builds before
+  the flag lands — the mitigation that makes this a `waived` rather than an
+  open hole (credentials kept out of the steps where `npm ci` runs) stays
+  either way. Sites: `ci.yml:32`, `ci.yml:46`, `deploy-site.yml:47`,
+  `release.yml:60`.
 
 - **The whole `critical` tier, walked: 233 findings, 2 real (0.9%).** Reported 2026-11-08 by the
   caller running the scanner over 42 projects, who decided every one with a written reason.

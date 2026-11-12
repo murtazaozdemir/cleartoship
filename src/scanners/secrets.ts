@@ -6,7 +6,7 @@ import { rulesForPath } from '../utils/gitignore.js';
 import { Suppressions } from '../utils/suppress.js';
 import { promote } from '../utils/paths.js';
 import { emptyResult } from '../types.js';
-import type { Finding, ProjectContext, ScanResult, Scanner, Severity } from '../types.js';
+import type { ScanResult, Scanner, Severity } from '../types.js';
 import { join } from 'node:path';
 import { shannonEntropy, redactCredential } from '../utils/entropy.js';
 import {

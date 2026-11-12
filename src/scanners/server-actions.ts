@@ -9,7 +9,7 @@ import {
 } from './auth-helpers.js';
 import type { ModuleAuth, SessionShape, WrapperOptions, WrapperVerdict } from './auth-helpers.js';
 import { inertNamesFor } from './effects.js';
-import type { Finding, ProjectContext, ScanResult, Scanner } from '../internal.js';
+import type { Finding, ScanResult, Scanner } from '../internal.js';
 
 /**
  * Calls that prove the caller's identity was checked server-side.

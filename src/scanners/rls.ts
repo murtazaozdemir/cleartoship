@@ -7,7 +7,7 @@ import {
 // reaching it directly cannot introduce an initialisation-order cycle.
 import { readBalanced } from '../utils/sql.js';
 import { adjustForPath } from '../utils/paths.js';
-import type { Finding, ProjectContext, ScanResult, Scanner, Severity } from '../internal.js';
+import type { Finding, ProjectContext, ScanResult, Scanner } from '../internal.js';
 import { existsSync } from 'node:fs';
 import { basename, dirname, join, relative, resolve, isAbsolute } from 'node:path';
 

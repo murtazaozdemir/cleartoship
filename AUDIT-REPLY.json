@@ -1,0 +1,83 @@
+{
+  "app": "cleartoship",
+  "generated": "2026-11-12",
+  "open_findings": 21,
+  "how_to_fill_this_in": "Fill in `state` and `note` on each row, then tell the auditor's session the file is ready (or run `./bugdetect reply cleartoship` from /Users/Shared/bugdetector if you have a shell there). ONE ROW PER CLASS, applying to every fid listed in it. `state`: `false-positive` if the probe is wrong, `waived` if it is real and you are accepting it, `open` to leave it standing. `note` is REQUIRED for the first two and is the only part nobody can reconstruct later -- say why, not that you looked. If only some of a class is real, copy the row and move those fids into the copy; the fids are what is read, not the class name. Leave `state` empty for anything you have not judged -- that is reported as undecided, which is honest, and is better than a label you do not mean. DO NOT write `fixed`: that word means a later probe run stopped seeing it, and this app once recorded two live critical secrets as `fixed` because they had merely been gitignored. If you have actually fixed something, write `fixed` anyway and it comes back as a re-check request -- nothing is recorded and the next run measures it. Also add the entry to this repo's own `TODO.md` (Rule 25 -- the auditor holds the index, your TODO.md is the home of the findings), and commit this file: it is the written record of who judged what and why.",
+  "decisions": [
+    {
+      "class": "over-500-lines",
+      "findings": 9,
+      "worst_severity": "medium",
+      "state": "open",
+      "note": "Counts are accurate; the framing is what I am rejecting, not the measurement. Rule 26's own step 1 says files are split by responsibility and that the line count is only the smoke alarm, and each of these nine is one responsibility: one scanner per file (secrets, dependencies, rls, server-actions, auth-helpers, agent-logic), one report renderer, one file-walk helper, one gitignore matcher. None of step 1's triggers fires -- there is no repeated block, no logic mixed into presentation (there is no presentation), and no distinct sections. Splitting any of them would put one scanner's calibration in two files, which is the drift this portfolio's own CLAUDE.md warns about. What IS missing is the rest of step 6, which these findings are the first half of: there is no check in CI that lists files over 500 lines and fails on a NEW one, and no allowlist pinning these nine at their current size as a ceiling so they can shrink but not grow. Left open rather than waived because that ratchet is worth building and is now in TODO.md; waiving would record the opposite.",
+      "fids": [
+        "cleartoship/size/over-500-lines:src/report.ts",
+        "cleartoship/size/over-500-lines:src/scanners/agent-logic.ts",
+        "cleartoship/size/over-500-lines:src/scanners/auth-helpers.ts",
+        "cleartoship/size/over-500-lines:src/scanners/dependencies.ts",
+        "cleartoship/size/over-500-lines:src/scanners/rls.ts",
+        "cleartoship/size/over-500-lines:src/scanners/secrets.ts",
+        "cleartoship/size/over-500-lines:src/scanners/server-actions.ts",
+        "cleartoship/size/over-500-lines:src/utils/files.ts",
+        "cleartoship/size/over-500-lines:src/utils/gitignore.ts"
+      ]
+    },
+    {
+      "class": "over-500-lines",
+      "findings": 1,
+      "worst_severity": "medium",
+      "state": "open",
+      "note": "Separated from the other nine because this one is real on Rule 26 step 1's own criterion, not just on the line count. src/scanners/community.ts is 2,968 lines doing two unrelated jobs: the vendored ruleset's calibration and scan loop, and -- about 1,400 lines of it -- a general-purpose regex engine (pattern parser, compiler, and a backtracking matcher with a memo of failed (state, position) pairs) that exists only to run arbitrary patterns in linear time and knows nothing about security rules. That is step 1's 'distinct sections' trigger, and the engine is the natural extraction: it has a narrow surface (matcherFor, linearInIrregexp, LinearMatcher) already exercised by its own test file. Not done in this pass on purpose -- step 7 says split existing giants as a planned refactor with the suite run after each batch, not in passing, and this session was here to fix a regex bug. Recorded in TODO.md.",
+      "fids": [
+        "cleartoship/size/over-500-lines:src/scanners/community.ts"
+      ]
+    },
+    {
+      "class": "eslint(no-unused-vars)",
+      "findings": 5,
+      "worst_severity": "low",
+      "state": "fixed",
+      "note": "Real, all five, and now removed -- so this is a re-check request, not a claim. Verified one at a time rather than autofixed, because HANDOFF.md's warning about no-unused-vars is about exactly this shape: each name occurred exactly ONCE in its file, on its own `import type` line, with no `export type` re-export anywhere, so none could be reached as an attribute from another module. Two files were under-reported: secrets.ts had both Finding and ProjectContext dead (the row says '2 occurrences' and names only Finding), so six names came out of five files. They are type-only imports erased at compile time, so there was no runtime or bundle effect either way; the check that they were genuinely unused is that tsc still compiles, which it does, plus 228 tests and an unchanged self-scan.",
+      "fids": [
+        "cleartoship/oxlint/eslint(no-unused-vars):src/scanners/dependencies.ts",
+        "cleartoship/oxlint/eslint(no-unused-vars):src/scanners/logic.ts",
+        "cleartoship/oxlint/eslint(no-unused-vars):src/scanners/rls.ts",
+        "cleartoship/oxlint/eslint(no-unused-vars):src/scanners/secrets.ts",
+        "cleartoship/oxlint/eslint(no-unused-vars):src/scanners/server-actions.ts"
+      ]
+    },
+    {
+      "class": "VG1070",
+      "findings": 4,
+      "worst_severity": "low",
+      "state": "waived",
+      "note": "The flag really is absent from all four `npm ci` steps, so the finding is accurate -- but the exposure it implies is already closed by design, which is why this is accepted rather than fixed today. The risk in a dependency's install script is what it can reach, and both workflows that hold a credential deliberately keep it away from `npm ci`: release.yml is split into a build job with a read-only token and a publish job that never checks out or runs repository code, with a comment saying `npm ci` must never run beside the write token; deploy-site.yml keeps the Cloudflare token out of job-level env for the same stated reason. Adding --ignore-scripts is still worth doing and is in TODO.md, but it is not the one-line change the finding implies: esbuild is a devDependency here and its platform binary comes through an install script, so `npm run bundle` in release.yml has to be proven to still work before the flag goes in -- and shipping a release that cannot bundle is a worse outcome than the risk this closes. --expect-provenance is the cheaper half and has no such dependency. Not false: a real gap, mitigated in depth, scheduled.",
+      "fids": [
+        "cleartoship/scanner/VG1070:.github/workflows/ci.yml:32:4a69de",
+        "cleartoship/scanner/VG1070:.github/workflows/ci.yml:46:4a69de",
+        "cleartoship/scanner/VG1070:.github/workflows/deploy-site.yml:47:4a69de",
+        "cleartoship/scanner/VG1070:.github/workflows/release.yml:60:4a69de"
+      ]
+    },
+    {
+      "class": "SC2116",
+      "findings": 1,
+      "worst_severity": "low",
+      "state": "fixed",
+      "note": "Correct and now fixed, so this is a re-check request. scripts/check-version-pins.sh:24 was `echo \"::error::docs name $(echo \"$bad\") but ...\"`; $bad is already the output of a command substitution, so it carries no trailing newline and the inner echo changed nothing -- replaced with ${bad}. Checked rather than assumed, because the one way an inner echo is load-bearing is newline handling: ran the failure branch against a fixture with two mismatched versions and got byte-identical output and the same exit 1. Worth noting the row survived a previous automated shellcheck safe-fix pass on this same file (commit 4f0b4fc, which closed SC2086 and an SC2116 elsewhere in it) -- so the autofixer saw this occurrence and left it.",
+      "fids": [
+        "cleartoship/shellcheck/SC2116:scripts/check-version-pins.sh"
+      ]
+    },
+    {
+      "class": "unpushed-commits",
+      "findings": 1,
+      "worst_severity": "medium",
+      "state": "fixed",
+      "note": "Accurate when measured and resolved since: `git rev-list --count @{upstream}..HEAD` is now 0. The five were automated oxlint/shellcheck safe-fix commits, each of which said in its own message that it was not verified against this app's tests; they went out with this session's VG530 fix after the suite was run over all of them together, which is the verification their messages were missing. A re-check request, not a claim -- the next measurement settles it.",
+      "fids": [
+        "cleartoship/gitstate/unpushed-commits"
+      ]
+    }
+  ]
+}

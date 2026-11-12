@@ -4,7 +4,7 @@ import { parseSource, calleeName, calleeTail } from '../utils/ast.js';
 import { traverse } from '../utils/traverse.js';
 import { Suppressions } from '../utils/suppress.js';
 import { emptyResult } from '../types.js';
-import type { Finding, ProjectContext, ScanResult, Scanner } from '../types.js';
+import type { Finding, ScanResult, Scanner } from '../types.js';
 
 /**
  * Cross-cutting logic checks for OWASP categories a pattern scanner can only

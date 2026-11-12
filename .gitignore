@@ -37,3 +37,15 @@ site/public/SHA256SUMS
 
 # The key to the anonymised app labels in this repo's notes — never commit (this repo is public)
 .feedback-key.md
+
+# bugdetect audit handoff (/Users/Shared/bugdetector). AUDIT-BRIEF.md lists the
+# file and line of every UNFIXED finding here, and this repo is public — that is
+# a map for anyone hostile, worth more than the findings are. The notices it
+# drops in the root quote other, PRIVATE apps by name, which the rule at the top
+# of CLAUDE.md forbids writing down here at all.
+#
+# AUDIT-REPLY.json is deliberately NOT ignored: it is the decision trail, it is
+# meant to be committed, and it holds only this repo's own paths plus the reasons
+# — read it before each commit and keep another app's name out of it.
+AUDIT-BRIEF.md
+BUGDETECT-NOTICE.md
