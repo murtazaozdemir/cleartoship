@@ -8,7 +8,7 @@ import { dirname, join } from 'node:path';
 
 import { scan } from '../dist/index.js';
 import { normaliseOwasp } from '../dist/utils/owasp.js';
-import { PATTERN_OVERRIDES, anchoredToInput } from '../dist/scanners/community.js';
+import { PATTERN_OVERRIDES, PATTERN_FIXES, anchoredToInput } from '../dist/scanners/community.js';
 import { GUARDVIBE_RULES } from '../dist/vendor/guardvibe/index.js';
 import { LineIndex } from '../dist/utils/line-index.js';
 import { lineAt } from '../dist/utils/files.js';
@@ -139,6 +139,15 @@ test('C2/k: a file between 400 KB and 2 MB is read by the community ruleset', as
   const hit = byId(result, 'VG014');
   assert.equal(hit.length, 1, 'eval at the end of a 420 KB file is reported');
   assert.equal(hit[0].file, 'lib/big.ts');
+});
+
+// A corrected pattern deliberately matches somewhere else than upstream's, so it
+// must not also be in PATTERN_OVERRIDES, whose whole contract is the opposite —
+// the equivalence test below would then be comparing the wrong two patterns, and
+// `effectivePattern` only ever runs one of them.
+test('no rule carries both a correction and a bounded override', () => {
+  const both = Object.keys(PATTERN_FIXES).filter((id) => id in PATTERN_OVERRIDES);
+  assert.deepEqual(both, [], 'a corrected pattern must be bounded in its corrected form');
 });
 
 test('bounded overrides match at exactly the positions upstream does', () => {

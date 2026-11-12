@@ -10,11 +10,11 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { scan } from '../dist/index.js';
-import { LinearMatcher, matcherFor, linearInIrregexp, PATTERN_OVERRIDES } from '../dist/scanners/community.js';
+import { LinearMatcher, matcherFor, linearInIrregexp, PATTERN_OVERRIDES, PATTERN_FIXES } from '../dist/scanners/community.js';
 import { GUARDVIBE_RULES } from '../dist/vendor/guardvibe/index.js';
 
 const byId = new Map(GUARDVIBE_RULES.map((r) => [r.id, r]));
-const effective = (id) => PATTERN_OVERRIDES[id] ?? byId.get(id).pattern;
+const effective = (id) => PATTERN_FIXES[id] ?? PATTERN_OVERRIDES[id] ?? byId.get(id).pattern;
 
 /** Every match `re` reports from `from` on, as `start:end`, stepping past empty ones as the scanner does. */
 function matches(re, text, from = 0) {

@@ -581,6 +581,59 @@ file where seven were expected — not something a test would have failed on.
 Worth remembering with the audit's other concurrency surprise: the same
 overlap produced the phantom "+1 finding" from a file edited mid-scan.
 
+**2026-11-12 — `VG530` was fired by checksum verification, and the cause was two
+defects in one regex.** Reported by the portfolio auditor against a build script
+that does the *opposite* of pipe-to-shell: it downloads to a file with `curl -o`,
+checks a SHA-256 against a hardcoded digest, and only then unpacks — which is
+exactly what the rule's own `fix` text recommends. The rule called it critical
+anyway. Upstream's pattern is
+`(?:curl|wget)\s+[^|]*\|\s*(?:bash|sh|zsh|…)`, and it takes both of its
+defects to produce the match: `[^|]*` is a negated class, so the span crosses
+newlines and attaches the *next* line's pipe to this line's `curl`; and the
+interpreter alternation carries no trailing `\b`, so `| shasum -a 256 -c -`
+matches as `| sh`, ending mid-word. `| sha256sum -c` goes the same way, so the
+rule fired on checksum verification in any shell script anywhere.
+
+Fixed as a **corrected pattern** rather than a match guard, in a new
+`PATTERN_FIXES` map beside `PATTERN_OVERRIDES` — and the distinction is the
+point. `PATTERN_OVERRIDES` exists to bound backtracking and promises to match at
+*exactly* upstream's positions, which `test/rules-audit.test.js` checks position
+by position; a correction deliberately matches somewhere else, so it cannot live
+there. A `MATCH_GUARDS` filter could not do this job either: a guard only rejects
+a match the pattern already found, and by then `lastIndex` has moved past
+everything that match swallowed — so a guard would have dropped the false
+positive and taken any real `curl … | bash` inside that 1,277-character span
+with it. `effectivePattern()` is now the one place that decides which pattern a
+rule runs with, and a test holds the two maps disjoint.
+
+The span fix alone was not enough, which is the part worth recording. On a
+second script the unbounded span had run **32 lines**, from the word "curl"
+inside `echo "🔨 Building … for curl installer"` down to a `| bash` far below,
+and reported the finding on the echo; correcting the span merely *moved* that
+finding to the real line — `echo "   curl -fsSL … | bash"`, a build script
+printing an install command for a human to copy. Printing a command is not
+running one, so that needs the guard after all: VG530's new `MATCH_GUARDS` entry
+suppresses a match inside a string whose last preceding command is `echo`,
+`printf` or `print`. Narrowly that, not "inside a string" — `bash -c "curl … |
+bash"` and `ssh host "curl … | bash"` are strings too and both really do fetch
+and run it, and both are pinned by tests.
+
+**Verified by sweeping all 272 shell scripts on this machine with both
+patterns.** Upstream matched in 12 files; the corrected one matches in 10, and
+the three it stopped matching were all false (the checksum script, the 32-line
+echo span, and a comment in a vendored reference repo that read "Libcurl is the
+library for curl"). Nothing new matched anywhere — `fixed matched, upstream did
+not: 0` — so the fix removed false positives without buying them with a missed
+finding. End to end through the scanner the two genuine ones are still reported
+critical (`curl -s …coverity_scan.sh | bash`, and golangci-lint's
+`curl -sSfL … | sh -s --`, where `\b` has to accept `sh` followed by a space),
+the eight `# curl … | bash` usage comments stay suppressed as comments, and both
+original reports now scan to **0 VG530 findings**. Ten new tests, including the
+two-line shape the reporter asked for verbatim plus `| sha256sum -c`; the suite
+is 228 tests, 219 passing, the 9 failures all pre-existing `EPERM` on `.env`
+fixtures from this session's sandbox (identical 9 on a stashed tree). Self-scan
+unchanged: 🟢, 68 files, 5 low-priority notes.
+
 ## Open
 
 - **The whole `critical` tier, walked: 233 findings, 2 real (0.9%).** Reported 2026-11-08 by the

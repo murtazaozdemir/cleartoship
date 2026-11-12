@@ -679,6 +679,14 @@ const AUTHORIZATION_CHECK = new RegExp(
   ].join('|'),
 );
 
+/**
+ * A shell builtin that writes its argument out instead of running it, as the
+ * last command before the string the match sits in. `[^;&|()]*$` is what makes
+ * it the *last* one: `echo done && bash -c "curl … | bash"` really does run it,
+ * and the `&&` between stops this from matching.
+ */
+const SHELL_PRINTS = /(?:^|[;&|(])\s*(?:echo|printf|print)\b[^;&|()]*$/;
+
 const MATCH_GUARDS: Record<
   string,
   (
@@ -1084,6 +1092,61 @@ const MATCH_GUARDS: Record<
     return true;
   },
 
+  // What is left of VG530 once `PATTERN_FIXES` has stopped its span crossing
+  // lines: an install command *printed* rather than run. A build script whose
+  // job is to tell a human how to install the thing ends with
+  // `echo "   curl -fsSL https://…/install.sh | bash"`, and emitting that line
+  // is not executing it. Code in a string is data — the same line VG010 and
+  // VG014 draw — but only where the string is being written out, because
+  // `bash -c "curl … | bash"` and `ssh host "curl … | bash"` are strings too
+  // and both really do fetch and run it.
+  VG530: (_match, source, index, spans) => {
+    if (!isInside(spans, index, 'string')) return true;
+    const lineStart = source.lastIndexOf('\n', index) + 1;
+    return !SHELL_PRINTS.test(source.slice(lineStart, index));
+  },
+
+};
+
+/**
+ * Corrections to a vendored pattern that matches text the rule is not about —
+ * a defect in the regex itself, reproducible from the rule's own input. Unlike
+ * the bounded replacements below, these deliberately match at *different*
+ * positions from upstream: that is the whole point of them, so they are held
+ * to regression tests of the shape that found them rather than to an
+ * equivalence check. The vendored files still stay a faithful copy of upstream,
+ * so re-vendoring remains a straight overwrite.
+ *
+ * A correction belongs here, rather than in `MATCH_GUARDS`, when the defect is
+ * in the *span* the pattern consumes. A guard can only reject a match the
+ * pattern already found, and by then `lastIndex` has moved past everything that
+ * match swallowed — so a guard would drop the false positive and take any real
+ * finding inside that span with it.
+ */
+export const PATTERN_FIXES: Record<string, RegExp> = {
+  // Upstream: `(?:curl|wget)\s+[^|]*\|\s*(?:bash|sh|zsh|…)|base64 …`.
+  // Two defects, and it takes both to produce the match that found them —
+  // `VG530` reported "pipe to shell execution", critical, on a checksum
+  // verification:
+  //
+  //     curl -fL --retry 3 -o "build-python/${PBS_FILE}" "$PBS_URL"
+  //     echo "${PBS_SHA256}  build-python/${PBS_FILE}" | shasum -a 256 -c -
+  //
+  // First, `[^|]*` is a negated class, so it crosses newlines: the span walks
+  // from the `curl` on line one into line two and takes *that* line's pipe.
+  // Second, the interpreter alternation carries no trailing `\b`, so
+  // `| shasum` matches as `| sh` — the matched text ends mid-word.
+  // `| sha256sum -c` goes the same way, so the rule fired on checksum
+  // verification in any shell script: the opposite of the risk it describes,
+  // and exactly what its own `fix` text recommends doing instead.
+  //
+  // The span fix is also what keeps the rule honest about *where* it fires. On
+  // another script the unbounded span ran 32 lines, from the word "curl" inside
+  // `echo "🔨 Building … for curl installer"` down to a `| bash` far below, and
+  // reported the finding on the echo. A command and the pipe it feeds sit on one
+  // line (`[^|\n]*`), and what follows the pipe is a whole word (`\b`).
+  VG530:
+    /(?:curl|wget)\s+[^|\n]*\|\s*(?:bash|sh|zsh|ksh|dash|source\s+\/dev\/stdin)\b|base64\s+(?:-d|--decode)\s+[^|\n]*\|\s*(?:bash|sh)\b/gi,
 };
 
 /**
@@ -1139,6 +1202,17 @@ export const PATTERN_OVERRIDES: Record<string, RegExp> = {
   VG958:
     /(?:deleteAccount|deleteUser|cancelSubscription|transferFunds|refund|terminat)\w*\s*(?:=\s*async|\([\s\S]{0,1000}?\)\s*(?:=>|{))(?:(?!confirm|verify|reauthenticate|twoFactor|2fa|otp|challenge)[\s\S]){10,3000}?(?:delete|destroy|remove|cancel)\s*\(/gi,
 };
+
+/**
+ * The pattern a rule is actually run with: a correction if it has one, else a
+ * bounded replacement, else upstream's own. No rule is in both maps — a
+ * corrected pattern that also needed bounding would have to be bounded in its
+ * corrected form, not in two places — and `test/rules-audit.test.js` holds the
+ * two sets disjoint.
+ */
+export function effectivePattern(rule: { id: string; pattern: RegExp }): RegExp {
+  return PATTERN_FIXES[rule.id] ?? PATTERN_OVERRIDES[rule.id] ?? rule.pattern;
+}
 
 // ---------------------------------------------------------------------------
 // Linear-time matching
@@ -2762,6 +2836,7 @@ export const RULE_COUNTS = {
   withheld: WITHHELD.size,
   guarded: Object.keys(MATCH_GUARDS).length,
   overridden: Object.keys(PATTERN_OVERRIDES).length,
+  corrected: Object.keys(PATTERN_FIXES).length,
   manifestOnly: MANIFEST_ONLY.size,
   active: GUARDVIBE_RULES.length - SUPERSEDED.size - WITHHELD.size,
 };
@@ -2824,7 +2899,7 @@ export const communityScanner: Scanner = {
         const guard = MATCH_GUARDS[rule.id];
         const credential = CREDENTIAL_RULE.test(rule.name);
 
-        const re = matcherFor(PATTERN_OVERRIDES[rule.id] ?? rule.pattern);
+        const re = matcherFor(effectivePattern(rule));
         let m: RegExpExecArray | null;
         let matches = 0;
         const started = performance.now();
@@ -2928,13 +3003,19 @@ export const communityScanner: Scanner = {
       `${SUPERSEDED.size} superseded by ClearToShip's AST checks, ${WITHHELD.size} withheld as noisy, ` +
         `${MANIFEST_ONLY.size} manifest-only (not run over lockfiles)`,
     ];
+    if (Object.keys(PATTERN_FIXES).length > 0) {
+      notes.push(
+        `${Object.keys(PATTERN_FIXES).length} run with a corrected pattern in place of upstream's, ` +
+          `which matched text the rule is not about (${Object.keys(PATTERN_FIXES).join(', ')})`,
+      );
+    }
     if (Object.keys(PATTERN_OVERRIDES).length > 0) {
       notes.push(
         `${Object.keys(PATTERN_OVERRIDES).length} run with a bounded pattern in place of upstream's ` +
           `(${Object.keys(PATTERN_OVERRIDES).join(', ')})`,
       );
     }
-    const linear = active.filter((r) => matcherFor(PATTERN_OVERRIDES[r.id] ?? r.pattern) instanceof LinearMatcher);
+    const linear = active.filter((r) => matcherFor(effectivePattern(r)) instanceof LinearMatcher);
     if (linear.length > 0) {
       notes.push(`${linear.length} run by a linear-time matcher (same matches, no super-linear backtracking)`);
     }

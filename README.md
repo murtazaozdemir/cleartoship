@@ -211,12 +211,16 @@ runtimes, React Native, Go and shell.
 30 upstream rules are **superseded** where another check is more
 precise — permanently, since the superseded version was the noisier of the two —
 6 are **withheld** as measurably noisy, 10 React Native rules are
-**skipped as inapplicable** on a project that is not React Native, 28 carry a
+**skipped as inapplicable** on a project that is not React Native, 29 carry a
 **match guard** for a
 shape their regex cannot exclude (a `"link": true` lockfile entry has no
 integrity hash by design; `querySelectorAll` is not a SQL call; `eval()` inside
 a sentence about eval is prose; a bounded agent loop written with the AI SDK's
-current `stopWhen` is not an unbounded one), and 3 name-heuristic rules are
+current `stopWhen` is not an unbounded one), 1 runs with a **corrected
+pattern** where upstream's matched text the rule is not about (VG530's span was
+a negated class, so it crossed newlines and attached a later line's pipe to an
+earlier `curl`, and its interpreter list had no trailing word boundary, so
+`| shasum -a 256 -c` matched as `| sh`), and 3 name-heuristic rules are
 **manifest-only** — they never run over a `package-lock.json`, where they matched
 ordinary transitive packages (`fast-glob`, `core-js`) and named nothing anyone
 could act on. Each list carries a reason per rule in
