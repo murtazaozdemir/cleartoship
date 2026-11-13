@@ -29,7 +29,7 @@
 2973 src/scanners/community.ts
 2238 src/scanners/server-actions.ts
 1424 test/scan.test.js
-1249 src/scanners/rls.ts
+1243 src/scanners/rls.ts
 1074 src/scanners/dependencies.ts
 1048 src/scanners/auth-helpers.ts
 939 src/scanners/agent-logic.ts

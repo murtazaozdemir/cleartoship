@@ -1073,6 +1073,58 @@ tool's rule set around this portfolio, and a rule satisfied by one app's filenam
 Dialect-correctness, by contrast, is general — telling any D1 user to enable RLS is wrong for every
 D1 user.
 
+
+**2026-11-13 — `CTS015` and `CTS052` judged a function from one migration instead of from the
+series.** Reported through the auditor by the session that owns app B as two symptoms of one
+defect. A Postgres function's current definition is the **last** one in timestamp order across the
+whole migrations directory, and a later `DROP FUNCTION` means there is no current definition at
+all. `rls.ts` already replays migrations in order and already models `DROP POLICY` that way — but
+it pushed the *function* findings as it met each statement, so a definition a later migration
+replaced or dropped still reported. The finding's subject did not exist once the series finished
+replaying: `CTS052` on a zero-argument `get_admin_user_ids()` with an anon grant that a later
+migration deletes, and `CTS015` on the migration that pins `search_path` on that same zero-argument
+function, one file before it is dropped. Dead text in both cases.
+
+The fix is a `FunctionLedger` in a new `src/scanners/sql-functions.ts`: declarations, drops,
+grants and revokes accumulate during the replay, and **nothing is reported until the series has
+finished**. `functionBodies` was already last-wins, which is why the policy-judgement side of the
+scanner was always right and only these two emissions were wrong.
+
+**Arity is load-bearing, not decoration, and the real file proves it.** The replacing migration
+does `DROP FUNCTION IF EXISTS public.get_admin_user_ids();` — arity 0 — in the *same file* where it
+creates `get_admin_user_ids(user_ids UUID[])` at arity 1 and grants `anon` EXECUTE on it. Keyed by
+bare name, that `DROP` would have deleted the live function's finding too, turning a false positive
+into a **false negative on a genuine issue**. Postgres identifies a function by name and argument
+types; full type resolution does not pay for itself, because a `CREATE` carries names, types and
+defaults while a `DROP` carries bare types, so matching them is guesswork precisely where guessing
+wrong loses a finding. Arity separates the overloads that matter, and where it cannot — two
+same-arity overloads with different argument text — the ledger **keeps** the finding rather than
+dropping it, because keeping one that should have gone costs attention while dropping one that
+should have stayed costs a vulnerability.
+
+Measured on app B: `CTS015` goes to **0** (its subject is deleted), and `CTS052` goes from the dead
+`20260419120000` file to **the surviving `20261109010000` one, where it is a true positive** — that
+migration really does grant `anon` EXECUTE on a `SECURITY DEFINER` function, and I read the file to
+confirm it rather than inferring. So this removed two dead findings and kept the live one, which is
+the outcome that distinguishes resolution from suppression. Seven tests; five of the six
+behavioural ones fail against the pre-fix build, and the sixth passes both ways by design, because
+it asserts the direction where the series makes things *worse* (a pinned function replaced by an
+unpinned one) — the old code caught that by accident and the new one catches it on purpose.
+
+**What the findings now refuse to claim.** The surviving definition is what the *repository* says
+and says nothing about what is deployed. The reporting session measured their production database
+still answering the old wide zero-argument RPC for an anonymous caller **three days after** the
+replacing migration was committed, because it had never been applied. So the text reads "after the
+migration series replays" and "both the grant and the definition survive the migration series",
+and a test asserts the findings do **not** contain "in your database", "currently deployed" or "is
+live". A scanner that reads files may not claim evidence about a running system.
+
+`rls.ts` ended up **1,257 → 1,243 lines**, below its old 1,249 ceiling, by moving the two statements
+that *undo* ledger state into the module that owns the state — the split that was missing is
+exactly why `DROP POLICY` was modelled and `DROP FUNCTION` never was. The gate emitted its
+shrink notice and the ceiling was tightened to 1,243, so for once today the ratchet moved the right
+way.
+
 ## Open
 
 - **New rule candidate: row-level authorization on a database that has no RLS.** Surfaced by the

@@ -6,6 +6,7 @@ import {
 // Not re-exported through internal.ts; sql.ts has no imports of its own, so
 // reaching it directly cannot introduce an initialisation-order cycle.
 import { readBalanced, blankSqlComments } from '../utils/sql.js';
+import { FunctionLedger, arityOf, applyFunctionStatement } from './sql-functions.js';
 import { adjustForPath } from '../utils/paths.js';
 import type { Finding, ProjectContext, ScanResult, Scanner } from '../internal.js';
 import { existsSync } from 'node:fs';
@@ -589,6 +590,8 @@ function analyseProject(
     const policies: Policy[] = [];
     const definerFunctions = new Set<string>();
     const functionBodies = new Map<string, string>();
+    // Function findings are judged after the replay, not during it.
+    const fns = new FunctionLedger();
     const publicBuckets: { id: string; file: string; line: number }[] = [];
     const findings: Finding[] = [];
 
@@ -692,24 +695,14 @@ function analyseProject(
           if (target.includes('function') && /\bexecute\b|\ball\b/.test(privs)) {
             const fnName = new RegExp(`function\\s+(${QUALIFIED_NAME})`, 'i').exec(grant[2]!)?.[1];
             const normalised = fnName ? normaliseTable(fnName) : null;
-            if (normalised && definerFunctions.has(normalised) && grantees.some((g) => UNAUTHENTICATED_ROLES.has(g))) {
-              findings.push({
-                id: 'CTS052',
-                severity: 'high',
-                title: 'SECURITY DEFINER function is callable without signing in',
-                detail:
-                  `\`${normalised}\` runs with its owner's privileges and EXECUTE is granted to ` +
-                  `${grantees.join(', ')}. Anyone holding the public anon key can call it, and whatever ` +
-                  'it does happens with the definer’s rights rather than theirs — Row Level Security ' +
-                  'included.',
-                fix:
-                  `REVOKE EXECUTE ON FUNCTION ${normalised} FROM anon, public;\n` +
-                  'Grant it to `authenticated` only, and check the caller inside the function body.',
+            if (normalised && grantees.some((g) => UNAUTHENTICATED_ROLES.has(g))) {
+              const args = /function\s+[^(]*(\([^)]*\))/i.exec(grant[2]!)?.[1];
+              fns.grantToUnauthenticated({
+                name: normalised,
+                arity: args ? arityOf(args) : null,
+                grantees,
                 file: relPath,
                 line: stmt.line,
-                cwe: 'CWE-269: Improper Privilege Management',
-                owasp: 'A01:2025 - Broken Access Control',
-                meta: { function: normalised, grantees },
               });
             }
             continue;
@@ -750,29 +743,29 @@ function analyseProject(
           functionBodies.set(bare, flat.slice(fnDecl[0].length));
         }
 
-        // SECURITY DEFINER functions without a pinned search_path.
+        // SECURITY DEFINER functions without a pinned search_path. Recorded
+        // rather than reported: a later migration may replace or drop this.
         if (/^create\s+(or\s+replace\s+)?function/i.test(flat) && /security\s+definer/i.test(flat)) {
           const declared = new RegExp(`^create\\s+(?:or\\s+replace\\s+)?function\\s+(${QUALIFIED_NAME})`, 'i').exec(flat)?.[1];
-          if (declared) definerFunctions.add(normaliseTable(declared));
-          if (!/set\s+search_path/i.test(flat)) {
-            const fname = declared ?? 'function';
-            findings.push({
-              id: 'CTS015',
-              severity: 'medium',
-              title: 'SECURITY DEFINER function without a pinned search_path',
-              detail:
-                `\`${fname}\` runs with the definer's privileges but inherits the caller's \`search_path\`. ` +
-                'A caller who can create objects in a schema earlier on that path can shadow a table or ' +
-                'operator the function uses and have their own code run as the definer.',
-              fix: 'Add `SET search_path = \'\'` (or an explicit schema list) to the function definition.',
+          if (declared) {
+            const name = normaliseTable(declared);
+            definerFunctions.add(name);
+            const argText = /^create\s+(?:or\s+replace\s+)?function\s+[^(]*(\([\s\S]*?\))/i.exec(flat)?.[1] ?? '()';
+            fns.declare({
+              name,
+              arity: arityOf(argText),
+              argText,
+              definer: true,
+              pinnedSearchPath: /set\s+search_path/i.test(flat),
               file: relPath,
               line: stmt.line,
-              cwe: 'CWE-426: Untrusted Search Path',
-              owasp: 'A01:2025 - Broken Access Control',
             });
           }
           continue;
         }
+
+        // DROP FUNCTION / REVOKE undo what the ledger recorded.
+        if (applyFunctionStatement(fns, flat)) continue;
 
         // Views bypass the RLS of their base tables unless security_invoker is set.
         const view = new RegExp(
@@ -854,6 +847,7 @@ function analyseProject(
     }
 
     // Pass 2: judge the resulting schema.
+    findings.push(...fns.findings());
     const callerFns = classifyFunctions(functionBodies);
     /** `table|command|policy` for each gate policy CTS014 reported, so CTS050 does not repeat it. */
     const gateLeaks = new Set<string>();
