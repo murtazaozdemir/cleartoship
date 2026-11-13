@@ -1159,6 +1159,50 @@ untracked file reports "all allowlisted" and the failure only appears after `git
 hide anything here, because the file was staged before the commit, and CI stages everything by
 definition. Worth remembering before trusting a green local gate on new code.
 
+
+**2026-11-13 — `CTS001` gave a sign-in *Server Action* a blocking `critical` for not checking a
+session it cannot have.** From the `critical`-tier walk: 27 `CTS001` findings, 14 on endpoints that
+cannot require a session. The entry asked for "a path-aware exception before anything else", and
+reading the code first showed one has existed since **2026-09-01** — `PUBLIC_BY_DESIGN_ROUTE`,
+which demotes to `low` with the reason stated. Verified on fixtures: `/register`,
+`/forgot-password` and `pages/api/login.ts` all report `low`, `app/admin/delete-user` stays
+`critical`. So that half was already done, the same way `CTS010`'s dialect detection was.
+
+The half that was not done: `intentionallyPublic` was gated on `isRoute`, so **a Server Action
+never qualified** — and backing a login form with a Server Action is the idiomatic App Router way
+to do it. A `login` action drew `critical` for missing authorization.
+
+**The `isRoute` gate was right to exist and is kept.** A route's path *is* its URL, so
+`app/login/route.ts` really is `/login`. An action's path is *not* its URL: actions are invoked by
+reference, so `app/login/actions.ts` may export anything at all, `deleteAllUsers()` included. So a
+route is judged on its path and an action on **its own exported name**, which is the stronger
+evidence for an action and the weaker one for a route. A test puts `login`, `signUp` and
+`deleteAllUsers` in the *same file* and asserts `low`, `low`, `critical`, because the directory is
+exactly what must not decide. `isPublicByDesign` lives in its own `src/scanners/public-by-design.ts`
+— moving the two route patterns out with it left `server-actions.ts` a line *below* its ceiling
+rather than above it, which is the second time today that putting a thing where it belongs paid for
+itself.
+
+It also caught a wording regression on the first run, which is why the suite dropped to 250 before
+coming back: `guestOnly` was computed as `info.guestOnly && !intentionallyPublic`, so once actions
+were judged by name, a sign-up action that reads the session *only to turn signed-in callers away*
+lost the specific "reachable by signed-out callers (guest-only by design)" title for the vaguer
+"appears public by design". An inverted session check is evidence from the code; a name is a
+heuristic. Where both hold, the code picks the wording, so that guard is gone.
+
+**What this does NOT do, stated plainly: it does not close the reported sub-item.** A/B on the two
+local Next.js apps shows **zero change** — `aistoreaudit`'s 5 `CTS001` findings were already `low`
+on both builds, `AppVitrine` has none — and the reason is that **no app under `/Users/Shared` uses
+Server Actions at all**, outside this repo's own fixtures. So there was nothing here for the fix to
+act on, which makes the zero delta expected rather than reassuring, and means the evidence for this
+fix is a reproducible synthetic case in a real framework idiom and *not* a measured improvement on
+anyone's code. The reporter's 14 findings were named as paths — `/login`, `/logout`, `/register`,
+`/forgot-password`, `/reset-password`, `/verify-email` — and those paths already demote correctly,
+so **I cannot account for them** and have asked the auditor for the file paths and `meta.kind` of
+all 27. Three candidates remain: they are Server Actions (this fix), they are routes whose paths the
+pattern does not match (an `(auth)` route group, `/api/v1/users` for registration), or `reasons` was
+non-empty and the finding was correct. Guessing between those is what this entry refuses to do.
+
 ## Open
 
 - **New rule candidate: row-level authorization on a database that has no RLS.** Surfaced by the

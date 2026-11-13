@@ -37,7 +37,7 @@
 # none is a Rule 26 step 1 violation; see TODO.md for why they are not being
 # split, and for the planned exception (the regex engine inside community.ts,
 # which is a genuine second section and is tracked as a step 7 refactor).
-2238 src/scanners/server-actions.ts
+2237 src/scanners/server-actions.ts
 1623 src/scanners/community.ts
 1424 test/scan.test.js
 1383 src/scanners/linear-regex.ts

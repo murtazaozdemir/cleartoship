@@ -3,6 +3,7 @@ import {
   parseSource, calleeName, calleeTail, hasDirective,
   traverse, buildModuleIndex, Suppressions, emptyResult,
 } from '../internal.js';
+import { isPublicByDesign } from './public-by-design.js';
 import {
   authHelpersFor, isAccessorOnly, isUserLookup, memberPath, resolveWrapper,
   CREDENTIAL_HEADERS, SECRET_ENV, SUPABASE_GET_SESSION,
@@ -1802,19 +1803,14 @@ export const serverActionsScanner: Scanner = {
           /webhook|\bhooks?\b|stripe|clerk|svix/i.test(relPath);
         const isCron = isRoute && /(^|\/)(cron|scheduled|jobs?)(\/|$)/i.test(relPath);
 
-        // Some endpoints are unauthenticated by design — the sign-in and
-        // account-recovery flow (you have no session yet), and public intake
-        // forms. Flagging "missing auth" there is a false positive, so it is
-        // reported at low rather than as a blocking critical.
-        const PUBLIC_BY_DESIGN_ROUTE =
-          /(^|\/|-)(login|signin|sign-in|register|signup|sign-up|forgot-password|reset-password|verify-email|resend-verification|magic-link|contact|lead|leads|waitlist|subscribe|unsubscribe|newsletter)(\/|-|\.|$)/i;
-        // Signing out only ends the caller's own session, so it needs no session to be
-        // recognised — unless it reads who to sign out from the request, which is the
-        // one way a logout endpoint is a bug (`/logout` taking a `userId` from the body).
-        const LOGOUT_ROUTE = /(^|\/|-)(logout|log-out|signout|sign-out)(\/|-|\.|$)/i;
-        const intentionallyPublic =
-          isRoute &&
-          (PUBLIC_BY_DESIGN_ROUTE.test(relPath) || (LOGOUT_ROUTE.test(relPath) && !info.readsRequestInput));
+        // Unauthenticated by design: a route by its path, an action by its own
+        // name. See public-by-design.ts for why those are different questions.
+        const intentionallyPublic = isPublicByDesign({
+          isRoute,
+          relPath,
+          name,
+          readsRequestInput: info.readsRequestInput,
+        });
 
         // A machine-to-machine endpoint has no session to look up: it proves the
         // caller by comparing a credential header against a server-side secret.
@@ -1829,7 +1825,10 @@ export const serverActionsScanner: Scanner = {
         // session only to turn signed-in callers away — is reported low. Unless it does
         // something such a flow has no business doing for a stranger: grant a role, write
         // somewhere other than the account tables, spend money. Then it is what it looks like.
-        const guestOnly = info.guestOnly && !intentionallyPublic;
+        // Not `&& !intentionallyPublic`: an inverted session check is evidence
+        // from the code while a public-by-design name is a heuristic, so where
+        // both hold the code picks the wording.
+        const guestOnly = info.guestOnly;
         const reasons: string[] = [];
         if (writes && !authenticated && (intentionallyPublic || guestOnly)) {
           const { escalation, tables } = info.privilege;
