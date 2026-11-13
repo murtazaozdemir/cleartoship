@@ -200,7 +200,7 @@ reaches a manifest.
 | **CTS072** | high | Insecure deserialization of untrusted data — `unserialize`, `pickle.loads`, unsafe `yaml.load` (A08) |
 
 **Community ruleset** — 468 rules vendored from
-[GuardVibe](https://github.com/goklab/guardvibe) (Apache-2.0), of which **432** run
+[GuardVibe](https://github.com/goklab/guardvibe) (Apache-2.0), of which **431** run
 
 Reported under their upstream `VG###` ids. These cover ground the AST scanners
 don't: known-vulnerable framework versions (`next` 14.2.3 is still shipped by a
@@ -210,17 +210,23 @@ runtimes, React Native, Go and shell.
 
 30 upstream rules are **superseded** where another check is more
 precise — permanently, since the superseded version was the noisier of the two —
-6 are **withheld** as measurably noisy, 10 React Native rules are
+7 are **withheld** as measurably noisy, 10 React Native rules are
 **skipped as inapplicable** on a project that is not React Native, 29 carry a
 **match guard** for a
 shape their regex cannot exclude (a `"link": true` lockfile entry has no
 integrity hash by design; `querySelectorAll` is not a SQL call; `eval()` inside
 a sentence about eval is prose; a bounded agent loop written with the AI SDK's
-current `stopWhen` is not an unbounded one), 1 runs with a **corrected
+current `stopWhen` is not an unbounded one), 2 run with a **corrected
 pattern** where upstream's matched text the rule is not about (VG530's span was
 a negated class, so it crossed newlines and attached a later line's pipe to an
 earlier `curl`, and its interpreter list had no trailing word boundary, so
-`| shasum -a 256 -c` matched as `| sh`), and 3 name-heuristic rules are
+`| shasum -a 256 -c` matched as `| sh`; VG1070 accepted `--expect-provenance`
+as satisfying it, and there is no such npm flag — npm ignores it and exits 0,
+so the rule could be silenced by a string that hardens nothing), 1 runs with
+**corrected wording** where the rule's own advice could not work (VG1070 again:
+it recommended that flag first, so an app following this tool's advice got a
+green check and no hardening — the text now says `--ignore-scripts`, with
+`npm audit signatures` as the separate provenance check), and 3 name-heuristic rules are
 **manifest-only** — they never run over a `package-lock.json`, where they matched
 ordinary transitive packages (`fast-glob`, `core-js`) and named nothing anyone
 could act on. Each list carries a reason per rule in
@@ -491,7 +497,7 @@ only when it applies to the project (a repo with no Next.js or SQL skips those).
 6. **LLM & agent risk** — CTS080–085: collects every binding that holds what a model
    returned and follows it into the sinks that would run or trust it, and reads each agent
    tool's body for an irreversible action with no approval step. See the design notes below.
-7. **Community ruleset** — the 432 vendored GuardVibe rules that remain after the
+7. **Community ruleset** — the 431 vendored GuardVibe rules that remain after the
    superseded and withheld ones are taken out, over the ground the AST scanners do not
    cover (Dockerfiles, Terraform, GitHub Actions, MCP runtimes, Go, shell).
 

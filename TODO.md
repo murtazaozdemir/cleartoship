@@ -814,7 +814,76 @@ One thing this did not change and is worth stating: the repo's own
 classifies `non-production` — the strong marker matches first, before the route root is ever
 consulted. A fixture tree is not anybody's route.
 
+**2026-11-12 — the scanner was certifying a no-op, and a rule that cannot fire on its own
+subject is now withheld.** Two classes came back from the portfolio, each reported by the
+session that owns the code it fired on, each having read the file.
+
+`VG1070` is the serious one. Upstream's pattern accepts **two** flags as satisfying it,
+`--expect-provenance` and `--ignore-scripts`, and its `fix` text recommends the first one
+first. There is no `--expect-provenance` flag: `npm config get expect-provenance` returns
+`undefined`, it is absent from `npm help ci`, and npm takes the unknown flag silently and exits
+0 (npm 10.9.2). Measured on a two-job workflow before the fix: `npm ci --expect-provenance`
+produced **no finding** and the bare `npm ci` produced one. So an app following this tool's own
+advice added a string that hardens nothing, the rule went quiet, and the green check was the
+harm — worse than saying nothing. Reported independently by two apps here on the same day with
+the same evidence, which is what settled it rather than one report.
+
+Fixed in both halves. `PATTERN_FIXES.VG1070` drops the fake flag from the lookahead, so only
+`--ignore-scripts` silences the rule; both lines of that workflow are now reported. And a new
+mechanism, `TEXT_FIXES` in `src/scanners/community-text.ts`, corrects a vendored rule's
+*words* — name, description, `fix`, `fixCode` — because a prose defect and a pattern defect are
+different bugs: one reports the wrong line, the other sends the reader somewhere useless. The
+corrected text names `--ignore-scripts`, points at `npm audit signatures` as the separate
+provenance check (a step, not a flag), and says outright that `--expect-provenance` is not a
+flag rather than quietly dropping it, since an app may already have it in CI. The scanner's own
+note now states the count, so a reader comparing a finding against upstream GuardVibe's text is
+told the wording is ours.
+
+`VG146` is withheld rather than guarded, which is the more honest of the two. It is "Unquoted
+.env Value with Special Characters" declared `languages: ["shell"]`, and `languagesFor` returns
+`shell` only for `.sh`/`.bash` — so a `.env` file never reaches this scanner and **the rule
+cannot fire on its own subject**. What it matched was `REPO=$(cd "$(dirname "$0")/../.." && pwd)`
+and `BASE=${FOP_BASE:-HEAD}` in shell scripts: command substitution and parameter expansion,
+where quoting them as the fix instructs would break the script. Read the file it fired on before
+judging, per the calibration bar — `#!/bin/sh` on line 1, the flagged lines exactly as reported.
+It fires on nearly every one of a 272-script corpus that sets a variable. A `MATCH_GUARDS` entry
+was written first and then deleted: with `.env` unreachable, a guard would leave a rule that
+looks active, can never match, and inflates the match-guard count. Withholding states it.
+Reviving it means giving dotenv files a language token of their own, not feeding them to the
+shell ruleset.
+
+**The 500-line ratchet caught its own author twice**, which is the first evidence it does
+anything. `community.ts` went to 3,153 and the gate failed; the answer was not to raise the
+ceiling on its third day but to move the calibration out, so `community-text.ts` (71 lines) and
+`community-patterns.ts` (119 lines, `PATTERN_FIXES` + `PATTERN_OVERRIDES` + `effectivePattern`,
+re-exported so existing imports keep working) now hold it and `community.ts` is **2,968** — 81
+lines below where this change started. It caught a second edit after the ceiling was tightened
+mid-change, which is the lesson for using it: set the ceiling once, at the end.
+
+Tests: `test/vg1070-and-vg146.test.js`, 6 tests, **4 of which fail against the pre-fix build**.
+They assert line numbers rather than counts (a count passes whichever two lines it picked) and
+assert the corrected text names the real remedy. Suite 240 tests.
+
+**One pre-existing flake found and not fixed:** `test/redos-overrides.test.js`'s
+"the audit-named rules grow linearly" asserts on wall-clock time and fails intermittently —
+`VG102: 0.0 ms at 32 KB, 24.0 ms at 128 KB`, where the small measurement rounding to zero makes
+the ratio meaningless. It appeared in 2 of 5 runs, and in the **unchanged** code as well as the
+changed, confirmed by stashing. A timing assertion in a suite that is otherwise deterministic
+teaches people to re-run on red, which is how a real failure gets waved through. It belongs in
+`## Open` and is there now.
+
 ## Open
+
+- **`test/redos-overrides.test.js` has a timing-based assertion that flakes.** "ReDoS: the
+  audit-named rules grow linearly, not with the square of the input" compares wall-clock at
+  32 KB against 128 KB, and the 32 KB measurement rounds to `0.0 ms`, so the ratio is
+  meaningless — `VG102: 0.0 ms at 32 KB, 24.0 ms at 128 KB`. Observed in 2 of 5 runs, in both
+  changed and unchanged code (confirmed by stashing), so it is not a regression. The point of
+  that test is real and worth keeping: the mechanism it guards is the linear matcher. But it
+  should assert on **work done** — matcher steps, or `(state, position)` pairs memoised — rather
+  than on elapsed milliseconds, or at minimum floor the small measurement so a zero cannot
+  produce an infinite ratio. A flaky assertion in an otherwise deterministic suite trains people
+  to re-run on red, which is how a real failure gets waved through.
 
 - **Extract the regex engine out of `community.ts` as a planned refactor.**
   About 1,400 of its 2,968 lines are the pattern parser, the compiler and the
