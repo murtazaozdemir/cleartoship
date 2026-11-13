@@ -109,3 +109,63 @@ test('an unauthenticated Server Action under app/docs is still critical', async 
     assert.equal(found[0].severity, 'critical', `${file} is addressable`);
   }
 });
+
+// ---------------------------------------------------------------------------
+// Harness files named `<something>-test.mjs` rather than `<something>.test.mjs`
+// ---------------------------------------------------------------------------
+//
+// Reported 2026-11-13 with a count, which is what made it worth fixing: 38
+// files across the portfolio carry the hyphen shape, 23 of them in one app, and
+// only ONE had produced a finding so far. The other 37 were a standing exposure
+// for every rule that demotes on a harness path.
+//
+// The dot is the convention the strong list was written for. The hyphen is just
+// as common for a standalone harness invoked by name rather than collected by a
+// runner -- `node scripts/scoring-test.mjs`. Such a file usually sits in
+// `scripts/`, which only demotes ONE step, so a finding in a test harness was
+// arriving at `high` rather than `low`. Go's `_test.go` was already in the
+// strong list for exactly this reason; this is the same convention everywhere
+// else.
+//
+// Checked against the real files before demoting anything, because a demotion
+// that is wrong is a missed finding: the ones this now covers are a smoke test
+// with its own `assert()`, a scoring-verification harness and a round-trip-cost
+// harness. All three are run by name and ship nothing.
+
+test('a hyphenated harness name reads as non-production, like _test.go already did', () => {
+  for (const p of [
+    'scripts/client-behaviour-test.mjs',
+    'scripts/smoke-test.mjs',
+    'scripts/worker-smoke-test.cjs',
+    'scoring-test.mjs',
+    'src/fuzz-test.ts',
+    'src/hardening-test.tsx',
+    'worker_test.py',
+  ]) {
+    assert.equal(pathClass(p), 'non-production', p);
+  }
+});
+
+test('A/B testing is a production feature, and `ab-test.ts` is what it gets called', () => {
+  // The expensive direction to be wrong in: demoting this turns a real finding
+  // in request-handling code into a `low`. The exception is listed explicitly in
+  // paths.ts rather than hidden in a lookahead, so it can be argued with.
+  for (const p of ['src/ab-test.ts', 'src/a-b-test.tsx', 'src/split-test.ts', 'lib/multivariate-test.js']) {
+    assert.equal(pathClass(p), 'production', p);
+  }
+});
+
+test('a word that merely ends in "test" is not a harness', () => {
+  // `[-_]test` is required, not `test`: the separator is the whole signal.
+  for (const p of ['src/lib/latest.ts', 'src/protest.ts', 'src/contest.js', 'src/lib/attest.ts']) {
+    assert.equal(pathClass(p), 'production', p);
+  }
+});
+
+test('the demotion is stated in the finding, not applied silently', () => {
+  // Same requirement as the route-root case above: a silent demotion of a live
+  // file never gets argued with.
+  const placed = adjustForPath('critical', 'scripts/smoke-test.mjs');
+  assert.equal(placed.severity, 'low');
+  assert.match(placed.note ?? '', /test|fixture|doc/i);
+});

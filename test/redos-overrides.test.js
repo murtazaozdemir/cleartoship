@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { scan } from '../dist/index.js';
+import { SUPERSEDED, WITHHELD } from '../dist/scanners/community-roster.js';
 import { LinearMatcher, matcherFor, linearInIrregexp, PATTERN_OVERRIDES, PATTERN_FIXES } from '../dist/scanners/community.js';
 import { GUARDVIBE_RULES } from '../dist/vendor/guardvibe/index.js';
 
@@ -154,13 +155,13 @@ function randomText(pieces, length) {
 }
 
 // Superseded and withheld rules never run; everything else can.
-const excluded = new Set();
-{
-  const src = readFileSync(fileURLToPath(new URL('../src/scanners/community.ts', import.meta.url)), 'utf8');
-  for (const block of [/const SUPERSEDED[\s\S]*?\]\);/, /const WITHHELD[\s\S]*?\]\);/]) {
-    for (const m of block.exec(src)[0].matchAll(/\[\s*'(VG\d+)'/g)) excluded.add(m[1]);
-  }
-}
+//
+// Read from the exported maps, not by regexing the scanner's source. The source
+// version silently became a no-op when those maps moved to community-roster.ts:
+// `block.exec(src)` returned null, and had the code been one line more forgiving
+// it would have produced an EMPTY excluded set and quietly started asserting
+// ReDoS properties about rules that never run.
+const excluded = new Set([...SUPERSEDED.keys(), ...WITHHELD.keys()]);
 const active = GUARDVIBE_RULES.filter((r) => !excluded.has(r.id));
 
 test('every active rule is either linear in V8 already or runs on the linear matcher; one exception', () => {

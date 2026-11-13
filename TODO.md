@@ -1383,6 +1383,88 @@ says `critical` is owed it there, not in a source file they will never open), th
 syntaxes still match so it is a re-label and not a narrowing, and that `GUARDVIBE_RULES` still holds
 the untouched vendored name and `critical` — so re-vendoring stays a straight overwrite.
 
+
+**2026-11-13 — `VG014` was the `CTS001` mistake a second time, and the auditor said so before I
+did.** 24 rows, all `false-positive`, and **21 already `low`** — the path classifier saw every one of
+them. The entry said "cannot see a test harness"; what it had was 21 demotions read as 21 unfixed
+findings. Struck, like `CTS001`. My own measurement before the data arrived said the same thing:
+`test/`, `tests/`, `__tests__/`, `*.test.ts`, `*.spec.ts`, `e2e/`, `cypress/`, `playwright/`,
+`testdata/`, `_test.go`, `test_*.py`, `conftest.py` and `mocks/` all classify `non-production`
+already. **Asking for rows twice beat writing a fix twice**, and both times the data refuted the
+entry rather than confirming it.
+
+**One real gap came out of it, and it was worth more than the finding that exposed it.** A harness
+named `<something>-test.mjs` — hyphen, not dot — matches no file pattern, and such a file usually sits
+in `scripts/`, which demotes only one step, so a finding in a test harness arrived at `high`. The
+count is what made it worth fixing: **38 files across the portfolio carry that shape, 23 of them in
+one app, and only one had ever produced a finding.** The other 37 were a standing exposure for every
+rule that demotes on a harness path. Go's `_test.go` was already in the strong list for exactly this
+reason; this is the same convention everywhere else, now covering `[-_]test.{mjs,cjs,js,jsx,ts,tsx,py}`.
+
+Before demoting anything I read the files: a smoke test with its own `assert()`, a
+scoring-verification harness, a round-trip-cost harness — all run by name, none shipped. And the
+exception is listed explicitly rather than hidden in a lookahead, because **A/B testing is a
+production feature and `ab-test.ts` is what it gets called**; demoting that would turn a real finding
+in request-handling code into a `low`, which is the expensive direction to be wrong in. Tests cover
+`ab-test`, `a-b-test`, `split-test`, `multivariate-test`, and separately `latest.ts`, `protest.ts`,
+`contest.js` and `attest.ts` — the separator is the whole signal.
+
+**Not fixed, deliberately: `setupTests.ts` / `jest.setup.js` / `vitest.setup.ts` classify as
+`production`.** They are harness files by any reading, and I suspected them from my own measurement
+— but the auditor checked and there are **zero instances of any of them** anywhere under
+`/Users/Shared`. So there is no evidence to calibrate against, and a demotion added on principle is
+one I cannot verify in either direction. Recorded here so it is not re-litigated from scratch:
+absence in one portfolio is not absence in the world, and if a real instance turns up this is a
+one-line fix.
+
+**2026-11-13 — two of my own rules described the same CVE, contradicted each other, and the wrong one
+was the `critical`.** Reported as two unjudged `critical` rows that had sat for five days, which
+briefly looked like the answer to "is `critical` ever used for something real". It was not — it was
+this:
+
+- **`VG1044`** (`high`) — 0.79.0 through 0.91.0, the local-filesystem Memory Tool, names both GHSAs
+  and both CVE ids, fix 0.81.0 / 0.91.1. **Correct.**
+- **`VG921`** (`critical`) — "versions before 0.81.0 … sandbox escape … access the host system, read
+  files, and **execute arbitrary commands**." Wrong three ways.
+
+I verified the advisory myself rather than from either rule's text, which is the only reason this is
+actionable: **CVE-2026-34451 / GHSA-5474-4w2j-mq4c affects 0.79.0 up to 0.81.0**, CVSS **5.4 medium**,
+a prefix check in the Memory Tool that omitted a trailing separator so a sibling directory
+(`memory-evil` beside `memory`) passed validation — and reachable only by a project that uses that
+tool at all.
+
+So `VG921`'s pattern, `0\.(?:[0-7]\d|80)\.\d+`, matches **0.0.x through 0.80.x — the entire version
+history before the vulnerability existed.** Its overlap with the truth is two minor versions out of
+eighty-one. Measured on two real manifests declaring `^0.52.0` and `^0.39.0`: both matched, neither
+can resolve into 0.79.x for a `0.x` package, both false. And the description overstates a
+sibling-directory path escape into host-level arbitrary command execution — **the same overreach
+removed from `VG414` today, for the same reason.** A rule that calls a medium path traversal a
+critical RCE is how a `critical` tier stops being read.
+
+Withheld rather than re-pointed: `VG1044` already owns the subject and states it better, and running
+both would double-report one CVE. Verified a genuinely affected `0.79.5` still reports — once, from
+`VG1044`, at `high`, naming the advisory and the 0.91.1 fix. A test asserts the withholding reason
+carries the verified range, and a non-vacuity test confirms `VG921` really would fire on `^0.52.0`
+without it.
+
+While doing it the summary line turned out to be lying slightly: it said *"N withheld as noisy"*, and
+this one is withheld for being **wrong**, not loud. Now "withheld as unusable as written".
+
+**And the count guard caught me twice, the second time because I checked the wrong file.** Withholding
+a rule changes the active count, which the README states — so `audit-coverage.test.js` failed, as it
+should. I fixed "of which **431** run" → 430, re-ran *`rules-audit.test.js`*, saw it green, and said
+the test passed. That is a different file; the assertion lives in `audit-coverage.test.js` and I had
+not run it. It was still failing, because **the README states the active count in two places** and
+the test reads both — the second is "the 431 vendored GuardVibe rules that remain", 300 lines further
+down. Exactly the shape this repo already has a scar from: the landing page said `v0.8.0` through five
+releases because the version check read the README and one example. A number in two places stays
+wrong in one of them, and a green run from the wrong file is indistinguishable from a green run.
+
+`SUPERSEDED`, `WITHHELD` and `MANIFEST_ONLY` moved to `src/scanners/community-roster.ts` — the fifth
+and bluntest calibration layer, deciding whether a rule is consulted at all rather than what it says,
+matches, survives or scores. `community.ts` **653 → 501**, so it began the day at 2,973 and ends at
+501 across three splits, each verified output-identical.
+
 ## Open
 
 - **New rule candidate: row-level authorization on a database that has no RLS.** Surfaced by the
@@ -1400,8 +1482,31 @@ the untouched vendored name and `critical` — so re-vendoring stays a straight 
   and a check satisfied by a filename is a box to tick rather than a control.
 
 
-- **The whole `critical` tier, walked: 233 findings, 2 real (0.9%).** Reported 2026-11-08 by the
-  caller running the scanner over 42 projects, who decided every one with a written reason.
+- **The whole `critical` tier, walked.** Reported 2026-11-08 by the caller running the scanner over
+  42 projects, who decided every one with a written reason.
+
+  **Status 2026-11-13: four of the five sub-items below are done, and the headline figure was
+  wrong in the scanner's favour.** Re-measured by the same caller from its ledger: **122 `critical`
+  rows — 104 false-positive, 16 `waived`, 2 `open`**, and the 2 `open` turned out to be false as
+  well (see the `VG921` entry above — two of my own rules describing one CVE and contradicting each
+  other). The "2 real" in the original framing counted only what was still undecided. **16 criticals
+  were judged real and accepted**, with written reasons: `CTS030` ×8 (a `service_role` key, a
+  database password and six more secrets in tracked or committed env files), `CTS010` ×6 (real and
+  costed by the app that owns it), `VG139` ×2. So `critical` has correctly identified something a
+  person should act on — it is secrets in env files and one schema — and nothing unjudged in that
+  portfolio is a real critical.
+
+  Done since: **`CTS001`** struck (the path exception had existed since 2026-09-01; the real gap was
+  Server Actions, fixed) · **`VG011`** fixed (a shell has to be in the way) · **`VG414`** re-labelled
+  XSS and moved to `high` · **`VG014`** struck (21 of 24 were already `low`), with its one real gap —
+  hyphenated `-test.mjs` harness names, 38 files — fixed in `paths.ts`.
+
+  **What remains is one rule, and it is 69% of the problem: `VG010` "SQL injection risk" accounts
+  for 72 of the 104 false-positive criticals.** Not a scatter of misses across many rules — one rule
+  producing more than two thirds of every wrong `critical` in the portfolio. That is the reason the
+  tier reads as noise: the sixteen real findings are drowning in it, not absent from it. This is the
+  next piece of work, and the first question for it is the one that paid off three times today —
+  what did it actually fire on.
   `VG010` 113, `CTS001` 27, `VG014` 24, `CTS030` 19, `VG414` 10, `VG011` 6, `VG001` 34. **The two
   real findings were both `CTS030`** — a Supabase `service_role` key and a database password that
   had been committed and pushed, which is exactly the finding a scanner should exist to produce.

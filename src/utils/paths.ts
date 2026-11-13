@@ -64,8 +64,39 @@ const ROUTE_ROOT = /^(?:src\/)?(?:app|pages)\//i;
 const DEV_TOOLING =
   /(^|\/)(scripts?|tools?|tooling|\.github|\.husky|\.circleci|seeds?|benchmarks?|codegen)\/|(^|\/)[^/]*\.config\.[cm]?[jt]s$|(^|\/)(Makefile|Dockerfile[^/]*|docker-compose[^/]*\.ya?ml)$/i;
 
+/**
+ * A harness file named `<something>-test.mjs` rather than `<something>.test.mjs`.
+ *
+ * The dot is the convention the strong list above was written for, and the
+ * hyphen is just as common for standalone harnesses invoked by name rather than
+ * collected by a runner: `smoke-test.mjs`, `scoring-test.mjs`,
+ * `client-behaviour-test.mjs`. None of `.test.`, `.spec.` or a `tests/`
+ * directory reaches any of them, and such a file usually sits in `scripts/`,
+ * which only demotes one step -- so a finding in a test harness was arriving at
+ * `high`.
+ *
+ * Measured across this portfolio by the auditor, 2026-11-13: **38 files** carry
+ * this shape, 23 of them in one app, and only one had produced a finding so far.
+ * The other 37 were a standing exposure for every rule that demotes on harness
+ * paths. Go's `_test.go` is in the strong list already for the same reason; this
+ * is the same convention everywhere else.
+ */
+const HARNESS_SUFFIX = /(^|\/)[^/]*[-_]test\.(?:[cm]?jsx?|[cm]?tsx?|py)$/i;
+
+/**
+ * Names that end in `-test` and are not tests.
+ *
+ * A/B testing is a production feature, and `ab-test.ts` is what it gets called.
+ * Demoting it would turn a real finding in request-handling code into a `low`,
+ * which is the expensive direction to be wrong in -- so the exception is
+ * explicit and listed rather than hidden in a lookahead, because the next person
+ * to read it needs to be able to argue with it.
+ */
+const AB_TEST_FEATURE = /(^|\/)(?:ab|a[-_]b|split|multivariate)[-_]test\.[^/]+$/i;
+
 export function pathClass(relPath: string): PathClass {
   if (NON_PRODUCTION_STRONG.test(relPath)) return 'non-production';
+  if (HARNESS_SUFFIX.test(relPath) && !AB_TEST_FEATURE.test(relPath)) return 'non-production';
   // A weak marker inside a route root is a route segment, not a hint about
   // what the file is for. `test/fixtures/<app>/app/...` still reads as
   // non-production, because the strong marker above matched first.

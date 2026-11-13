@@ -200,7 +200,7 @@ reaches a manifest.
 | **CTS072** | high | Insecure deserialization of untrusted data — `unserialize`, `pickle.loads`, unsafe `yaml.load` (A08) |
 
 **Community ruleset** — 468 rules vendored from
-[GuardVibe](https://github.com/goklab/guardvibe) (Apache-2.0), of which **431** run
+[GuardVibe](https://github.com/goklab/guardvibe) (Apache-2.0), of which **430** run
 
 Reported under their upstream `VG###` ids. These cover ground the AST scanners
 don't: known-vulnerable framework versions (`next` 14.2.3 is still shipped by a
@@ -210,7 +210,7 @@ runtimes, React Native, Go and shell.
 
 30 upstream rules are **superseded** where another check is more
 precise — permanently, since the superseded version was the noisier of the two —
-7 are **withheld** as measurably noisy, 10 React Native rules are
+8 are **withheld** as unusable as written, 10 React Native rules are
 **skipped as inapplicable** on a project that is not React Native, 29 carry a
 **match guard** for a
 shape their regex cannot exclude (a `"link": true` lockfile entry has no
@@ -497,7 +497,7 @@ only when it applies to the project (a repo with no Next.js or SQL skips those).
 6. **LLM & agent risk** — CTS080–085: collects every binding that holds what a model
    returned and follows it into the sinks that would run or trust it, and reads each agent
    tool's body for an irreversible action with no approval step. See the design notes below.
-7. **Community ruleset** — the 431 vendored GuardVibe rules that remain after the
+7. **Community ruleset** — the 430 vendored GuardVibe rules that remain after the
    superseded and withheld ones are taken out, over the ground the AST scanners do not
    cover (Dockerfiles, Terraform, GitHub Actions, MCP runtimes, Go, shell).
 

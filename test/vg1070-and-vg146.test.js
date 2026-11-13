@@ -112,5 +112,8 @@ test('the scanner says how many rules it withheld, and VG146 is one of them', as
   const note = result.checks.find((c) => c.label.startsWith('Community ruleset'))?.note ?? '';
   // Withholding must be stated, not silent: "no findings" cannot be
   // indistinguishable from "that rule was never run".
-  assert.match(note, new RegExp(`${RULE_COUNTS.withheld} withheld as noisy`));
+  // "noisy" until 2026-11-13, when VG921 was withheld for being wrong rather
+  // than loud -- it duplicated VG1044 on the same CVE, contradicted it, and did
+  // so at a higher severity.
+  assert.match(note, new RegExp(`${RULE_COUNTS.withheld} withheld as unusable as written`));
 });

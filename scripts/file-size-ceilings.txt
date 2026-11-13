@@ -44,6 +44,12 @@
 #   3049 -> 3158 (+3.6%), 2ef410f 2973 -> 3006 (+1.1%), 4c820cb 1623 ->
 #   1654 (+1.9%). An earlier note here implying 0.2% was the steps counter
 #   from another commit, not a split; corrected 2026-11-13.
+#   community.ts 676 -> 653 and community-severity.ts 74 (2026-11-13), the
+#   SEVERITY_ADJUSTERS layer; and 653 -> 501 with community-roster.ts 176,
+#   the SUPERSEDED / WITHHELD / MANIFEST_ONLY roster. Neither new file is
+#   over 500, so neither needs a row here -- which is the shape a split
+#   should have. community.ts began 2026-11-13 at 2973 and ended at 501,
+#   across five moves, each verified not to change a single finding.
 #
 # Measured 2026-11-12. Each of these is one responsibility -- one scanner per
 # file, one report renderer, one file-walk helper, one gitignore matcher -- so
@@ -60,8 +66,8 @@
 939 src/scanners/agent-logic.ts
 815 src/scanners/secrets.ts
 757 src/utils/gitignore.ts
-653 src/scanners/community.ts
 615 src/utils/files.ts
 571 src/report.ts
 520 site/public/index.html
 509 test/audit-core.test.js
+501 src/scanners/community.ts
