@@ -904,6 +904,30 @@ third is the guard that must pass both ways: `env/` and `environment/` with no `
 somebody's source and are still read. The skip is also asserted to be *named* in
 `skippedDirs`, because "no findings" must never be indistinguishable from "nothing was read".
 
+**Followed up the next day, and the scope of the fix is narrower than it first looked — worth
+recording because the correction is the useful part.** A portfolio sweep for `pyvenv.cfg` outside
+`.venv`/`venv` found **five** misnamed virtualenvs holding ~23,000 `.py` files between them, and
+the obvious reading was that this fix saved all five. It does not. Measured by diffing the
+scanner's own `fileCount` between the pre-fix and post-fix builds on each one:
+
+| | files read, before → after | findings |
+|---|---|---|
+| the app measured above | 7,740 → 226 | 645 → 9 |
+| the other four | unchanged (0 delta each) | unchanged |
+
+Only one app was ever reading its virtualenv. Two of the other four have the directory
+**gitignored**, and the walk already refuses to descend into an ignored directory — which is
+where most of this scanner's saving has always come from. The remaining two are not git repos
+and their venvs were still not read, with the counts merely moving between
+`gitIgnoredCount` and `skippedDirs`. **A `.py` file count is not the same question as "was it
+opened"**, and treating the two as interchangeable is how the five-app number appeared.
+
+That makes the marker test *more* clearly right rather than less, which is the part to keep: the
+four that cost nothing were covered **by luck of configuration**, not by anything structural.
+Gitignore is a choice each repository makes; `pyvenv.cfg` is a fact about the directory. A repo
+that forgets to ignore its venv, or has no git at all, gets the same 7,500-file read — and that
+is the case a marker catches and a name never will.
+
 One ceiling moved **up** for this: `files.ts` 591 → 615. A `pyvenv.cfg` test belongs in the file
 whose job is file collection, and Rule 26 step 1 is explicit that files are split by
 responsibility rather than by line count — a new file for one 6-line predicate would be the
