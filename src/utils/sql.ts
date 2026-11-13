@@ -1,8 +1,31 @@
+import { lexSpans, commentStyleFor } from './spans.js';
+
+const SQL_COMMENTS = commentStyleFor(['sql']);
 /**
  * Minimal PostgreSQL statement splitter. Deliberately not a full parser: it
  * only needs to know where one statement ends, which means respecting string
  * literals, dollar-quoted function bodies and both comment styles.
  */
+/**
+ * `source` with every SQL comment replaced by spaces, offsets preserved.
+ *
+ * For deciding *what a file is* from the syntax it uses rather than from what
+ * its prose says about itself. A dialect test that reads comments as code gets
+ * the answer backwards on exactly the files that document themselves best: a
+ * Cloudflare D1 schema explaining the Postgres setup it replaced read as
+ * Postgres, because a comment saying "there is no auth.uid() here" contains
+ * `auth.uid(` -- and a second comment saying "no gen_random_uuid()" then
+ * vetoed the SQLite reading that would have corrected it.
+ */
+export function blankSqlComments(source: string): string {
+  let out = source;
+  for (const span of lexSpans(source, SQL_COMMENTS)) {
+    if (span.kind !== 'comment') continue;
+    out = out.slice(0, span.start) + ' '.repeat(span.end - span.start) + out.slice(span.end);
+  }
+  return out;
+}
+
 export interface SqlStatement {
   text: string;
   /** 1-indexed line where the statement starts. */

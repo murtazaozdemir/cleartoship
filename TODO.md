@@ -1018,7 +1018,76 @@ belongs on that class, and the five lines cannot be moved anywhere that makes se
 time this gate has caught its own author, and the second time the right answer was to raise the
 number and say why rather than to move code.
 
+
+**2026-11-13 — `CTS010` fired on a SQLite schema because its comments explained that it was
+SQLite.** Reported through the auditor by the session that owns app B: six `CTS010` findings
+("Public table with Row Level Security disabled", `critical`) on a Cloudflare **D1** schema. D1 is
+SQLite — it has no row-level security and `ALTER TABLE … ENABLE ROW LEVEL SECURITY` is not a
+statement it has — so **no edit to that file could ever have cleared the finding**. That is worse
+than a false positive: a false positive wastes an afternoon, an unsatisfiable one teaches you the
+scanner cannot be cleared.
+
+The expected fix was to build dialect detection. Reading the code first showed it already exists:
+`postgresSqlFiles()` judges every `.sql` file on its own and excludes the ones that are not
+Postgres, with a documented bias toward *including* on doubt, because "dropping a Postgres file on
+a guess is a clean report on unread code". The gap was narrower and funnier than a missing feature
+— it judged the dialect from the **whole file, comments included**, so the schema read as Postgres
+*because its comments explain that it is not*:
+
+```
+--      `has_role(auth.uid(),'admin')`. There is no auth.uid() here. Their
+--   4. No gen_random_uuid(). The Worker supplies ids with crypto.randomUUID().
+```
+
+The first makes `PG_RLS_IDIOMS` match on `auth.uid(`, which skips the exclusion branch outright;
+the second would have vetoed the SQLite reading anyway through `POSTGRES_ONLY`. Both are prose
+about what the file deliberately does **not** do. Same class as the VG530 false positive and the
+`-main` directory tell: a pattern reading a comment as code. `spans.ts` already carried that
+lesson in its own doc comment — "every comment in them read as code and a vendored rule fired on a
+sentence" — about this repo's own source.
+
+So the fix is one line of behaviour: the dialect test now runs on `blankSqlComments(src)` rather
+than `src`. That helper went into `utils/sql.ts`, beside `readBalanced`, using the existing
+`lexSpans` lexer rather than a second comment scanner — which matters for the case a hand-rolled
+stripper gets wrong, a `--` inside a string literal, asserted directly. **`rls.ts` grew by zero
+lines**, because folding the import into the existing `utils/sql.js` line avoided raising a third
+ceiling in one day; the file sits exactly at its 1,249 ceiling and that was the right forcing
+function rather than an obstacle.
+
+Measured: app B goes from **6 `CTS010` findings to 0**, and the D1 schema now produces no finding
+of any kind, while that app's genuine `supabase/migrations/*.sql` findings (`CTS050`, `CTS052`,
+`CTS015`) all still fire. Four tests; the regression one fails against the pre-fix build with
+`expected no findings on the D1 schema, got CTS010`, and the two "nothing lost" tests — a real
+Postgres table with RLS off still `critical`, and Postgres-only syntax in code still winning over
+an RLS idiom that appears only in prose — pass both ways by design. Suite 249 → 253.
+
+**What was deliberately not done, and why it is not a dodge.** The reported remedy was "detect the
+dialect and skip or re-word". Re-wording was the wrong half: `CTS010` is a PostgreSQL/Supabase RLS
+rule, and on a D1 schema there is no RLS to report on, so exclusion is the designed behaviour
+rather than a suppression. The genuine concern the reporting session raised — after their cutover
+the Worker is the only line, and nothing checks that it filters by caller — is real and is **not
+this rule's subject**. It would need a rule about Worker-layer authorization, which does not exist.
+That is a candidate, recorded in `## Open`, and it deliberately does not point at the
+authorization-map artifact that app happens to keep: `/Users/Shared/CLAUDE.md` forbids shaping this
+tool's rule set around this portfolio, and a rule satisfied by one app's filename is exactly that.
+Dialect-correctness, by contrast, is general — telling any D1 user to enable RLS is wrong for every
+D1 user.
+
 ## Open
+
+- **New rule candidate: row-level authorization on a database that has no RLS.** Surfaced by the
+  `CTS010` dialect fix above (2026-11-13). Once a SQLite/D1 schema is correctly excluded from the
+  Postgres RLS scanner, nothing checks the thing that actually matters there: that the single
+  application layer in front of the database filters every query by the caller's identity. On
+  Postgres the engine can be made to enforce it and `CTS010`-`CTS019` check that it is; on D1 the
+  engine cannot, so the guarantee lives entirely in code that no rule currently reads.
+  Shape it would need: for each table reachable from a Worker, is there a query path that does not
+  constrain rows by an authenticated subject. That is a dataflow question, not a pattern, which is
+  why it is a candidate and not a quick win — and it is the honest reason the `CTS010` fix *removed*
+  a finding without replacing it. **It must not be satisfiable by naming a documentation file.** One
+  app in the portfolio keeps an authorization map and it would be trivial to let its presence clear
+  the rule; `/Users/Shared/CLAUDE.md` forbids shaping this tool's rule set around this portfolio,
+  and a check satisfied by a filename is a box to tick rather than a control.
 
 - **Extract the regex engine out of `community.ts` as a planned refactor.**
   About 1,400 of its 2,973 lines are the pattern parser, the compiler and the

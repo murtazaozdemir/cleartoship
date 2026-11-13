@@ -5,7 +5,7 @@ import {
 } from '../internal.js';
 // Not re-exported through internal.ts; sql.ts has no imports of its own, so
 // reaching it directly cannot introduce an initialisation-order cycle.
-import { readBalanced } from '../utils/sql.js';
+import { readBalanced, blankSqlComments } from '../utils/sql.js';
 import { adjustForPath } from '../utils/paths.js';
 import type { Finding, ProjectContext, ScanResult, Scanner } from '../internal.js';
 import { existsSync } from 'node:fs';
@@ -162,7 +162,7 @@ function postgresSqlFiles(ctx: ProjectContext): string[] {
   const model = buildDialectModel(ctx);
   const candidates: { file: string; src: string; perFile: boolean }[] = [];
   for (const file of sql) {
-    const src = read(file) ?? '';
+    const src = blankSqlComments(read(file) ?? '');
     const underSupabase = rel(ctx.root, file).split('/').slice(0, -1).includes('supabase');
     const idioms = PG_RLS_IDIOMS.test(src);
     const pkgSupabase = nearestPackageSupabase(model, file, ctx.root) === true;
