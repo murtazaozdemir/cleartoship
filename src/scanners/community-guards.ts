@@ -26,6 +26,7 @@
  * ------------------------------------------------------------------------- */
 
 import { isInside } from '../utils/spans.js';
+import { shellIsInvolved } from './shell-exec.js';
 import type { Span } from '../utils/spans.js';
 
 /** SQL verbs strong enough that the call is about a database by itself. */
@@ -611,11 +612,18 @@ export const MATCH_GUARDS: Record<
   // `query`, `execute` and friends stand on their own. A real interpolated
   // `exec(\`INSERT INTO ...\`)` still matches — checked against one.
 
-  // `(?:child_process|cp)[\s\S]*?(?:exec|spawn…)` lets the bridge run to the end
-  // of the file: one match measured 3,608 characters and 109 lines, pairing an
-  // `import … from "node:child_process"` with an `exec(` far below it and
+  // Two separate problems, both of which have to pass.
+  //
+  // The bridge first: `(?:child_process|cp)[\s\S]*?(?:exec|spawn…)` runs to the
+  // end of the file. One match measured 3,608 characters and 109 lines, pairing
+  // an `import … from "node:child_process"` with an `exec(` far below it and
   // reporting the import as a critical. A real one is a single statement.
-  VG011: (match) => (match.match(/\n/g)?.length ?? 0) <= 1,
+  //
+  // Then whether a shell is in the way at all, which is what made the rule
+  // 0-for-6 on real code -- see `shell-exec.ts`.
+  VG011: (match, source, index) =>
+    (match.match(/\n/g)?.length ?? 0) <= 1 &&
+    shellIsInvolved(match, source, (at) => callArgs(source, index + at)),
 
   // `sk-[A-Za-z0-9-_]{20,}` has no boundary in front of it, so the slug
   // `best-disk-space-analyzer-mac-2026` contains an "OpenAI key" — the `sk-` in

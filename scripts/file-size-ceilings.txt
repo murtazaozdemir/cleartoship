@@ -20,6 +20,11 @@
 #   LinearMatcher, so the ReDoS tests can assert on work done instead of
 #   elapsed milliseconds. Instrumentation for a class belongs on that
 #   class; the 5 lines cannot be moved anywhere that makes sense.
+#   community-guards.ts 978 -> 986 (2026-11-13), the VG011 shell test. The
+#   decision itself -- 103 lines of which runners shell out -- went to its own
+#   shell-exec.ts; what is left here is the guard entry, its comment and one
+#   import, which is the floor for adding a guard to the guards file. Trimmed
+#   the comment once to get from 990 to 986 rather than raising further.
 #
 # A SPLIT adds a row, which is the one case where the list grows. Rule 26
 # step 7 asks for the split and step 6 fails on any new file over 500, so a
@@ -35,6 +40,10 @@
 #   MATCH_GUARDS calibration layer and the source-reading helpers that exist
 #   only to serve it. Second split of the same file the same day; it began
 #   the day at 2973. 1623 -> 1654 across the two, +31 lines (1.9%).
+#   Measured cost of all three splits, from git at each commit: 97721f6
+#   3049 -> 3158 (+3.6%), 2ef410f 2973 -> 3006 (+1.1%), 4c820cb 1623 ->
+#   1654 (+1.9%). An earlier note here implying 0.2% was the steps counter
+#   from another commit, not a split; corrected 2026-11-13.
 #
 # Measured 2026-11-12. Each of these is one responsibility -- one scanner per
 # file, one report renderer, one file-walk helper, one gitignore matcher -- so
@@ -47,7 +56,7 @@
 1243 src/scanners/rls.ts
 1074 src/scanners/dependencies.ts
 1048 src/scanners/auth-helpers.ts
-978 src/scanners/community-guards.ts
+986 src/scanners/community-guards.ts
 939 src/scanners/agent-logic.ts
 815 src/scanners/secrets.ts
 757 src/utils/gitignore.ts

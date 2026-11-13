@@ -1149,8 +1149,21 @@ tension was described to the rulebook session earlier the same day, with a presc
 gets its own entry at its measured size in the same commit, with the reason logged, and the **sum
 is not the thing guarded**, because a sum lets one half grow while the other shrinks and still
 reports green. The gate's own error message already said the same thing. Applying it here: the sum
-went 2,973 → 3,006, **+33 lines (1.1%)** of header and import, which is the price of the seam and
-sits inside the 0.2–6.7% range measured on two earlier splits.
+went 2,973 → 3,006, **+33 lines (1.1%)** of header and import, which is the price of the seam.
+
+**Correction, 2026-11-13, after the rulebook session measured it:** this paragraph originally said
+that cost sat "inside the 0.2–6.7% range measured on two earlier splits", and the 0.2% was wrong. At
+`97721f6`, the split that moved the pattern and text overrides out, `community.ts` went 3,049 →
+2,968 while `community-patterns.ts` (119) and `community-text.ts` (71) appeared: **3,049 → 3,158,
++109 lines, +3.6%**. The 0.2% figure was the five-line `steps` counter from a different commit
+entirely, which I had mistaken for the split's cost. The 6.7% end of that range I cannot source at
+all and withdraw it.
+
+Measured properly, the three splits are **+3.6%, +1.1% and +1.9%**. The correction *strengthens* the
+argument it was used for: at 0.2% a reader can fairly answer "then a 1% tolerance covers it", and a
+hard "the sum may not grow" invariant looks almost affordable. At 3.6% the tolerance would have to
+be large enough that a reviewer should be reading the reason rather than checking a number — which
+is the actual conclusion, and it now rests on a figure that holds.
 
 One limitation of the gate found while doing this, worth knowing rather than fixing: it reads the
 **git index**, so a brand-new file is invisible until it is staged. That is deliberate — it is what
@@ -1224,7 +1237,98 @@ session will get wrong: wording goes in `community-text.ts`, a broken pattern in
 a match a correct pattern still cannot judge without the surrounding code. **A guard that is really
 a pattern bug hides the bug and keeps the cost** — one more rule that looks active and does nothing.
 
-Sum 1,623 → 1,654, **+31 lines (1.9%)**, inside the range the three earlier splits measured.
+Sum 1,623 → 1,654, **+31 lines (1.9%)**. With the first split's cost re-measured (see the
+correction above), the three splits this repo has made cost **+3.6%, +1.1% and +1.9%** — all
+verified from git at the commit that made each, not derived by subtraction.
+
+
+**2026-11-13 — the auditor sent the 27 `CTS001` rows, and they refute its own entry. Candidate 2
+was the one I thought most likely; its data kills it.** All 27 are `false-positive` in its ledger,
+**`kind` is `Route Handler` on 23 of 27**, and the only `Server Action` rows in the whole portfolio
+are the four in this repo's own `test/fixtures/vulnerable-app/`. Zero Server Actions anywhere else —
+which is exactly why my A/B measured nothing, and the reason the zero delta was the honest number to
+report rather than a disappointment to explain away.
+
+More to the point: **no real app produced a `critical` `CTS001` at all.** Severity across the 27 was
+17 `low`, 6 `high`, 4 `critical`, and all four criticals are this repo's fixtures. The class entered
+the `critical`-tier walk by its *worst-ever* severity, which was my own vulnerable-app tree. And all
+fourteen auth-shaped paths — `forgot-password`, `reset-password`, `verify-email`, `login`, `logout`,
+`register`, `resend-verification`, `contact`, `lead`, across five apps — came through at `low`
+**carrying the demotion text**. `PUBLIC_BY_DESIGN_ROUTE` fired on every one. Not one was a pattern
+miss. The auditor's own account of its error is the useful part: *"I read demoted findings as unfixed
+ones and filed the exception that had already fired as missing."* So the sub-item is **struck as
+wrong, not closed as unresolvable** — the work it asked for shipped on 2026-09-01.
+
+What survives from it is real and is the next `CTS001` fix, and it is not about paths at all:
+
+> **`CTS001` equates "authenticated" with "checks a session".**
+
+Three of the six `high` findings present a credential that is not a session, and the rule cannot see
+any of them: a setup endpoint where *the token in the body is the credential* (with IP rate limiting
+before the token is even parsed), a license-validation endpoint called by a desktop app that **has no
+session** and presents a license key, and a trial endpoint gated on Cloudflare Turnstile that
+*refuses with 503 if the secret is unset, so a misconfiguration fails closed*. That is a detectable
+shape — a handler that reads a bearer-ish secret from the body or a header and gates on it before
+touching a datastore — and it is a better rule, not a demotion. The other three are smaller and
+separate: a deprecated stub whose POST returns `410 Gone` and does nothing (a handler with nothing to
+authenticate, probably the cheapest of all to detect), and two that are public by design but not
+auth-shaped, which no path pattern will ever reach.
+
+**Also reported, with evidence, and a genuine defect of mine that today's re-wording made sharper
+rather than smaller:** `VG1070` asks for `--ignore-scripts` on `npm ci` without reading `.npmrc`. One
+app commits `.npmrc` with `ignore-scripts=true`, says so in a comment above each `npm ci`, and
+follows each with a `rebuild:native` step that re-enables scripts for exactly three packages, with a
+licence check that fails the build if that set drifts either way. Narrowing the title to name the flag
+made the miss more pointed. Added to `## Open`.
+
+
+**2026-11-13 — `VG011` called an argv list "command injection", 0-for-6.** The vendored pattern's
+last alternative is `.*(?:req\.|request\.|params\.|body\.|input|argv)`, so *any* argument
+mentioning `argv`, or merely containing the substring `input`, turns a command runner into a
+`critical`. What it fired on included `subprocess.run(["make", "-C", sys.argv[1], target])` — the
+form Python's own documentation recommends, **precisely because it never reaches a shell**.
+
+The fix keys on the thing the rule's name depends on: **is a shell in the way at all?** Command
+injection needs something to read `;`, `|` and `$(` and act on them. `subprocess.run([…])` execs
+`make` directly, so a `target` of `x; rm -rf /` is one literal argument named `x; rm -rf /`. So:
+`os.system`, `os.popen`, `shell_exec` and `child_process.exec` always have a shell and always report;
+anything passing `shell=True` or `shell: true` has asked for one and reports; an argv form without it
+does not. Unrecognised shapes **keep** the finding, because missing a real injection costs more than
+one more read of a call that turns out to be fine.
+
+It also fixes a second class nobody reported: `.exec(` matches this pattern just as well on
+`re.exec(req.body.q)`, and `RegExp.prototype.exec` is not command execution. That one needs the
+`child_process` import to be present in the file before an `exec`/`execSync` call counts.
+
+**What it deliberately does not do is relabel the residual risk away.** An argv call still carries
+*argument* injection — a `target` of `--output=/etc/passwd` is a flag `make` will honour. Real class,
+different fix (`--`, or validation). It is not command injection, and reporting it as such at
+`critical` is the specific thing that teaches people to skip the tier.
+
+Verified both directions on fixtures: 5 genuine cases kept (`os.system`, `shell=True` on `run` and
+`Popen`, `cp.execSync` with a template literal, and `spawn` with `shell: true` — the last one proving
+it keys on the option and not the function name), and 3 false positives gone (list-form
+`subprocess.run`, `spawnSync` with an argv array, `RegExp.exec`). **Independently corroborated:** the
+auditor had already marked all 6 of its `VG011` rows `false-positive` for this exact reason, and swept
+all 555 first-party `.py` files for `shell=True` without finding a real occurrence.
+
+Two things went wrong on the way, both worth keeping:
+
+- **My own new test passed vacuously.** The "unrecognised runner keeps its finding" case used a PHP
+  `shell_exec` fixture, and PHP is not in `VG011`'s language list (`javascript, typescript, python,
+  go, shell`), so the file was never read and the test asserted nothing. It is now a direct call on
+  the function, which is honest about the fact that the vendored pattern cannot actually produce that
+  shape — every callee it can match is one the new code recognises.
+- **The first version rescanned the whole file for `child_process` on every match**, which is
+  quadratic on a large file — the exact shape this scanner has a linear-time matcher and a budget to
+  avoid, reintroduced inside a guard. A one-entry cache fixes it, and the doc comment says why it is
+  there so nobody removes it as a micro-optimisation.
+
+`shellIsInvolved` lives in `src/scanners/shell-exec.ts` and **imports nothing on purpose**. The
+obvious alternative — importing `callArgs` from `community-guards.ts`, which imports this — is an
+import cycle, and this ships as **one bundled file**, where a cycle can leave a binding `undefined`
+at module-init time instead of failing loudly. The caller passes the argument text in as a callback
+instead.
 
 ## Open
 
