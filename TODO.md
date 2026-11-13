@@ -935,6 +935,37 @@ worse mistake. `scripts/file-size-ceilings.txt` now carries a short log of upwar
 their reasons, since that is the one direction the gate exists to resist. In the same day
 `community.ts` went 3,049 → 2,968 by moving calibration out, so the ratchet is net tighter.
 
+**2026-11-13 — `CTS070` called an upstream error payload a request body, and the fix was to
+re-word it rather than drop it.** Reported through the auditor by the session that owns app B, on
+a service-role read helper whose failure path is `const body = (await res.json().catch(() =>
+({}))) as { code?: string; message?: string }` followed by `console.error(…, body)`. The rule's
+`BODY_EXPR` is `/(?:^|\.)(body|rawBody|payload)$/`, and the leading `(?:^|\.)` means it matches a
+*bare* local named `body` — so the finding went out with its central sentence, "whatever a caller
+put in the request body — passwords, tokens, personal data", describing an object no caller ever
+touched. That is the `VG1070` failure in a different costume: not a missed bug, but a true-looking
+sentence that is false about the code it is printed next to.
+
+Suppressing it would have been wrong, though, which is why this took a provenance check rather
+than a narrower regex. PostgREST returns `details` and `hint` alongside `code` and `message`, and
+`details` can quote the offending row; the `as { code, message }` cast narrows the *declared* type
+without narrowing what arrives over the wire. So the body really is worth not dumping — the class
+and the remedy were wrong, not the concern. It now reports at `low` as "Upstream response body
+written to logs", and the fix text says to log `res.status` and `body.code` rather than "redact
+the field", which was advice that did not apply.
+
+The side is resolved from the binding chain, not from the identifier's name, because **the name is
+the ambiguous part**: `await res.json()` and `await request.json()` are the same call shape, and
+both results get called `body`. `bodySide()` walks `body` → `await res.json().catch(…)` → `res` →
+`await fetch(…)`, which needs the `TSAsExpression`, the `await` and the `.catch()` all unwrapped
+before the receiver is visible, and then takes `fetch` as the decisive signal rather than guessing
+from `res` vs `req`. An unresolvable chain returns `'unknown'` and keeps the original wording, so
+the fail-safe direction loses no detection; `meta.side` now carries `request`/`upstream`/`unknown`
+so a consumer can filter on it. Six tests, five of which fail against the pre-fix build — the
+sixth is the fail-safe guard, which must pass both ways by construction. On app B the single
+real-world instance moved `medium`/"Request body" → `low`/"Upstream response body", and no other
+`CTS070` in that app changed. Suite 243 → 249, the same 9 sandbox `.env` `EPERM` failures as
+before; `logic.ts` 334 → 447, still unlisted and under the 500 ceiling.
+
 ## Open
 
 - **`test/redos-overrides.test.js` has a timing-based assertion that flakes.** "ReDoS: the

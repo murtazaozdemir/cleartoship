@@ -30,6 +30,97 @@ const SENSITIVE_NAME =
 /** Reading a whole request/response body into a log dumps everything in it. */
 const BODY_EXPR = /(?:^|\.)(body|rawBody|payload)$/;
 
+/**
+ * Methods that read a body off a `Response`. `await res.json()` and
+ * `await request.json()` are the same call shape, so the method name alone
+ * cannot say which side of the wire a body came from -- the receiver can.
+ */
+const BODY_READERS = new Set(['json', 'text', 'arrayBuffer', 'formData', 'blob', 'bytes']);
+
+/** Receivers that name an inbound request in Express, Hono, Workers and Next. */
+const REQUEST_RECEIVER = /^(?:req|request|event|ctx|c)$/i;
+
+/** Promise combinators that wrap the call that actually read the body. */
+const PROMISE_CHAIN = new Set(['catch', 'then', 'finally']);
+
+/** Strip the wrappers that sit between a declarator and the call underneath. */
+function unwrapExpr(node: any): any {
+  let n = node;
+  while (
+    n &&
+    (n.type === 'TSAsExpression' ||
+      n.type === 'TSSatisfiesExpression' ||
+      n.type === 'TSNonNullExpression' ||
+      n.type === 'TSTypeAssertion' ||
+      n.type === 'ParenthesizedExpression' ||
+      n.type === 'AwaitExpression')
+  ) {
+    n = n.expression ?? n.argument;
+  }
+  return n;
+}
+
+/** `res.json().catch(() => ({}))` -> `res.json()`. */
+function stripPromiseChain(node: any): any {
+  let n = node;
+  while (
+    n?.type === 'CallExpression' &&
+    n.callee?.type === 'MemberExpression' &&
+    PROMISE_CHAIN.has(n.callee.property?.name)
+  ) {
+    n = unwrapExpr(n.callee.object);
+  }
+  return n;
+}
+
+/** The initializer of `name`'s binding in this scope, or null. */
+function initializerOf(scope: any, name: string): any {
+  try {
+    return scope?.getBinding?.(name)?.path?.node?.init ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which side of the wire a logged `body`/`payload` came from.
+ *
+ * This resolves the binding chain rather than guessing from the name, because
+ * the name is exactly what is ambiguous: a local `const body = await
+ * res.json()` holding an upstream error payload and a destructured request
+ * body are both called `body`. Reported by the session that owns app B, on a
+ * `selectRows` helper that logs a failed PostgREST read's error object -- for
+ * which "whatever a caller put in the request body" was simply untrue.
+ *
+ * `'unknown'` keeps the original request-body wording, so an unresolvable
+ * chain loses no detection.
+ */
+function bodySide(scope: any, arg: any, depth = 0): 'request' | 'upstream' | 'unknown' {
+  let receiver: any = null;
+  if (depth > 3) return 'unknown';
+
+  if (arg.type === 'MemberExpression') {
+    receiver = arg.object;
+  } else if (arg.type === 'Identifier') {
+    const init = stripPromiseChain(unwrapExpr(initializerOf(scope, arg.name)));
+    // `const payload = req.body` -- one more hop, same question.
+    if (init?.type === 'MemberExpression') return bodySide(scope, init, depth + 1);
+    if (init?.type !== 'CallExpression') return 'unknown';
+    const callee = init.callee;
+    if (callee?.type !== 'MemberExpression') return 'unknown';
+    if (!BODY_READERS.has(callee.property?.name)) return 'unknown';
+    receiver = callee.object;
+  }
+
+  if (receiver?.type !== 'Identifier') return 'unknown';
+  if (REQUEST_RECEIVER.test(receiver.name)) return 'request';
+
+  // The decisive signal: the receiver itself came from `fetch(...)`.
+  const src = unwrapExpr(initializerOf(scope, receiver.name));
+  if (src?.type === 'CallExpression' && calleeTail(src.callee) === 'fetch') return 'upstream';
+  return 'unknown';
+}
+
 /** Deserializers that can instantiate objects or run code from their input. */
 const UNSAFE_DESERIALIZE = [
   'unserialize', // node-serialize / serialize-to-js — RCE on crafted input
@@ -213,24 +304,46 @@ export const logicScanner: Scanner = {
               const sensitive = name && SENSITIVE_NAME.test(name);
               const wholeBody = name && BODY_EXPR.test(name);
               if (sensitive || wholeBody) {
+                // A whole-body log is only a *request* body when the body came
+                // from the request. An upstream response body read off a
+                // `fetch` is a different finding with a different remedy, so
+                // it is re-worded rather than dropped: a database layer's
+                // error payload carries diagnostic fields that can echo row
+                // values, which is worth saying, but no caller put them there.
+                const side = wholeBody && !sensitive ? bodySide(path.scope, arg) : 'request';
+                const upstream = side === 'upstream';
                 push({
                   id: 'CTS070',
-                  severity: wholeBody && !sensitive ? 'medium' : 'high',
-                  title: wholeBody && !sensitive ? 'Request body written to logs' : 'Secret or PII written to logs',
+                  severity: !wholeBody || sensitive ? 'high' : upstream ? 'low' : 'medium',
+                  title: sensitive
+                    ? 'Secret or PII written to logs'
+                    : upstream
+                      ? 'Upstream response body written to logs'
+                      : 'Request body written to logs',
                   detail:
                     (wholeBody && !sensitive
-                      ? `\`${name}\` is logged in full, so whatever a caller put in the request body — ` +
-                        'passwords, tokens, personal data — lands in your log store and anywhere it is shipped.'
+                      ? upstream
+                        ? `\`${name}\` holds a body read from an upstream \`fetch\` response, and is logged ` +
+                          'in full. Nothing a caller sent is in it, so this is not a request-body leak — but ' +
+                          'an error payload is not only the fields you typed into its cast: PostgREST returns ' +
+                          '`details` and `hint`, which can quote the offending row, and a `as {code, message}` ' +
+                          'annotation narrows the type without narrowing what arrives.'
+                        : `\`${name}\` is logged in full, so whatever a caller put in the request body — ` +
+                          'passwords, tokens, personal data — lands in your log store and anywhere it is shipped.'
                       : `\`${name}\` is written to a log. Logs are retained, replicated to aggregators and ` +
                         'often world-readable to a whole team; a credential or piece of PII there is a ' +
                         'leak that outlives the request.'),
-                  fix:
-                    'Do not log the raw value. Log a non-reversible reference (a user id, a hash prefix) ' +
-                    'or redact the field before logging.',
+                  fix: upstream
+                    ? 'Log the fields you actually need — a status and an error code — rather than the whole ' +
+                      'object: `console.error(table, res.status, body.code)`. If the full payload is wanted ' +
+                      'for debugging, pick the keys explicitly so a new upstream field cannot start arriving ' +
+                      'in your logs unreviewed.'
+                    : 'Do not log the raw value. Log a non-reversible reference (a user id, a hash prefix) ' +
+                      'or redact the field before logging.',
                   line: node.loc?.start.line ?? 0,
                   cwe: 'CWE-532: Insertion of Sensitive Information into Log File',
                   owasp: 'A09:2025 - Security Logging & Alerting Failures',
-                  meta: { logged: name },
+                  meta: { logged: name, side },
                 });
                 break;
               }
