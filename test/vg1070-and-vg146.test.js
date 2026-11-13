@@ -6,6 +6,7 @@ import { join, dirname } from 'node:path';
 
 import { scan } from '../dist/index.js';
 import { PATTERN_FIXES, RULE_COUNTS } from '../dist/scanners/community.js';
+import { TEXT_FIXES } from '../dist/scanners/community-text.js';
 
 // Both reported 2026-11-12 by apps in this portfolio, and both are cases where
 // a vendored rule asks for something that cannot work.
@@ -88,7 +89,13 @@ test('the corrected VG1070 pattern is the one actually run', () => {
   // Upstream accepted either flag; the correction accepts only the real one.
   assert.doesNotMatch(PATTERN_FIXES.VG1070.source, /expect-provenance/);
   assert.match(PATTERN_FIXES.VG1070.source, /ignore-scripts/);
-  assert.equal(RULE_COUNTS.reworded, 1);
+  // Which rules carry a re-wording, not how many: a bare count passes just as
+  // happily when one entry is swapped for another, and the point of the count
+  // is that every re-wording is a deliberate, reviewed claim.
+  //   VG1070 -- upstream accepted a flag npm does not have
+  //   VG414  -- upstream named a vulnerability the pattern does not find
+  assert.deepEqual(Object.keys(TEXT_FIXES).sort(), ['VG1070', 'VG414']);
+  assert.equal(RULE_COUNTS.reworded, Object.keys(TEXT_FIXES).length);
 });
 
 test('VG146 does not fire on a shell script that sets a variable', async () => {

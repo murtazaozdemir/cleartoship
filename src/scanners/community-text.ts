@@ -17,6 +17,45 @@ export const TEXT_FIXES: Record<
   string,
   { name?: string; description?: string; fix?: string; fixCode?: string }
 > = {
+  // Upstream calls this "Server-Side Template Injection (SSTI)". It is not, and
+  // the two are different vulnerabilities with different worst cases.
+  //
+  // SSTI is user input becoming part of the TEMPLATE SOURCE, so the engine
+  // evaluates attacker-written template expressions -- `render_template_string(
+  // "Hello " + name)` with a `name` of `{{7*7}}` returns `Hello 49`, and from
+  // there Jinja2's object graph reaches `os.system`. That is remote code
+  // execution, and critical is right for it.
+  //
+  // What this pattern finds is `<%- x %>`, `{{{ x }}}` and `{{ x | safe }}`: a
+  // developer-written template rendering a VALUE without HTML-escaping it. Only
+  // the value is attacker-controlled, the template is not, and the engine never
+  // evaluates the value as template syntax. The worst case is XSS -- serious,
+  // not RCE. The upstream description already describes this mechanism
+  // correctly, which is what makes the name a defect rather than a disagreement;
+  // it then overreaches by claiming the injected script "executes server-side",
+  // which this shape cannot do.
+  //
+  // Severity moves critical -> high in SEVERITY_ADJUSTERS, for the same reason.
+  VG414: {
+    name: 'Unescaped value in a template (XSS)',
+    description:
+      'A template renders a value with HTML escaping turned off — EJS `<%- %>`, Handlebars ' +
+      '`{{{ }}}`, Pug `!=` or the Nunjucks/Jinja2 `| safe` filter. If the value can carry ' +
+      'anything an attacker supplied, the markup and script in it reach the page as markup ' +
+      'and script. This is cross-site scripting: the template itself is yours and the engine ' +
+      'does not evaluate the value as template syntax, so it is not template injection and ' +
+      'cannot run code on the server.',
+    fix:
+      'Escape it: `<%= %>`, `{{ }}`, Pug `=`. Turn escaping off only for markup you produced ' +
+      'yourself.\n\n' +
+      'Where the value really is HTML — rendered Markdown, a rich-text field — the escaping ' +
+      'is not what should change. Sanitise it first, and put the sanitiser in the filter chain ' +
+      'immediately before the unescaped one so the next reader can see the guarantee rather ' +
+      'than having to trace where the value came from. Use an allow-list sanitiser: DOMPurify, ' +
+      'or `rehype-sanitize` in a Markdown pipeline. The sanitiser is the control — turning ' +
+      'escaping off states only that escaping was skipped.',
+  },
+
   VG1070: {
     name: 'CI npm install/ci without --ignore-scripts',
     description:

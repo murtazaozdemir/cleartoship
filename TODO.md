@@ -1330,6 +1330,59 @@ import cycle, and this ships as **one bundled file**, where a cycle can leave a 
 at module-init time instead of failing loudly. The caller passes the argument text in as a callback
 instead.
 
+
+**2026-11-13 — `VG414` was named for a vulnerability it does not find: SSTI, at `critical`,
+0-for-10.** The two are genuinely different and the distinction is the whole fix:
+
+- **SSTI** is user input becoming part of the **template source**, so the engine evaluates
+  attacker-written template expressions. `render_template_string("Hello " + name)` with a `name` of
+  `{{7*7}}` returns `Hello 49`, and from there Jinja2's object graph reaches `os.system`. That is
+  remote code execution, and `critical` is right for it.
+- **What the pattern actually matches** is `<%- x %>`, `{{{ x }}}` and `{{ x | safe }}` — a
+  developer-written template rendering a **value** without HTML-escaping it. The template is not
+  attacker-controlled and the value is never evaluated as template syntax. The worst case is XSS.
+
+The tell that this is a defect and not a difference of opinion: upstream's own *description* already
+describes the mechanism correctly. It then overreaches with "JavaScript that executes **server-side**",
+which this shape cannot do — and that sentence is what makes the name look justified. Both are fixed.
+
+Severity moves `critical` → `high`, and that is a **class** correction rather than a threshold tweak:
+`critical` was carrying SSTI's code-execution worst case, which this cannot reach. It stops at `high`
+deliberately. An unescaped value an attacker can reach is real XSS, and the 0-for-10 means those ten
+values were developer-controlled — which the rule cannot see, and which is precisely the one thing a
+reader has to check. Demoting further on ten samples I have not read would be loosening a threshold
+to make findings go away, which is the one thing the release skill forbids outright.
+
+The fix text needed work too, because "escape it" is useless advice for a rendered-Markdown field.
+It now says that where the value really is HTML, the escaping is not what should change: sanitise
+first and keep the chain visible — `{{ body | markdown | sanitize | safe }}`, or DOMPurify /
+`rehype-sanitize` upstream — because **an allow-list sanitiser is the control and `| safe` only says
+escaping was skipped.**
+
+`SEVERITY_ADJUSTERS` moved to `src/scanners/community-severity.ts`, which makes the calibration layer
+four files that each answer one kind of defect — words, pattern, context, severity — and took
+`community.ts` from 676 to **653** rather than raising a ceiling 19 lines. Its header states the bar,
+because a severity file is the easiest of the four to abuse: *what does not qualify is a severity that
+produces more findings than someone wants to read.* Six months on, a quietening and a correction look
+identical, so every entry says which class it is reasoning about and why.
+
+**The self-scan then caught the rule firing on its own remediation text**, which is worth recording
+because it is the second time this exact shape has happened here. The first version of the fix
+illustrated the safe chain with a complete `{{ body | markdown | sanitize | safe }}`; `VG414` read
+its own advice string in `community-text.ts:53`, reported it at `high`, and the repo's self-scan
+dropped from 🟢 CLEAR to 🟡 CONDITIONAL. The rule was right and the text was wrong — **advice about a
+pattern tends to contain that pattern**, the same way a credential-shaped literal once landed in a
+source comment. Fixing the *rule* to tolerate this repo's documentation would be shaping the ruleset
+around this repo, which is the one thing it must not be shaped around, so the example moved into prose
+and the libraries are named instead. There is now a test that runs the vendored pattern over every
+field of `TEXT_FIXES.VG414` and fails if any of them trips it, checked non-vacuous against the
+original string.
+
+Tests assert the published-rule reason reaches the **report** (a reader seeing `high` where the rule
+says `critical` is owed it there, not in a source file they will never open), that all three
+syntaxes still match so it is a re-label and not a narrowing, and that `GUARDVIBE_RULES` still holds
+the untouched vendored name and `critical` — so re-vendoring stays a straight overwrite.
+
 ## Open
 
 - **New rule candidate: row-level authorization on a database that has no RLS.** Surfaced by the

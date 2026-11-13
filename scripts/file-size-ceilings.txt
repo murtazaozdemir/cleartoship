@@ -60,7 +60,7 @@
 939 src/scanners/agent-logic.ts
 815 src/scanners/secrets.ts
 757 src/utils/gitignore.ts
-676 src/scanners/community.ts
+653 src/scanners/community.ts
 615 src/utils/files.ts
 571 src/report.ts
 520 site/public/index.html

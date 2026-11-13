@@ -11,6 +11,7 @@ import { commentStyleFor, lexSpans, isInside } from '../utils/spans.js';
 // The matcher engine lives in its own file; re-exported because the ReDoS
 // and override tests import these from here.
 import { MATCH_GUARDS } from './community-guards.js';
+import { SEVERITY_ADJUSTERS } from './community-severity.js';
 import { LinearMatcher, linearInIrregexp, matcherFor } from './linear-regex.js';
 import type { Matcher } from './linear-regex.js';
 export { LinearMatcher, linearInIrregexp, matcherFor };
@@ -415,30 +416,6 @@ function inDevDependencies(source: string, index: number): boolean {
   return nearest?.[1] === 'dev';
 }
 
-/**
- * Rules whose upstream severity is right for one shape they match and wrong for
- * another. Returning null leaves the rule's own severity alone.
- */
-const SEVERITY_ADJUSTERS: Record<
-  string,
-  (match: string, source: string, index: number) => { severity: Severity; note: string } | null
-> = {
-  // The rule matches two different things. Explicitly accepting `alg: none` is
-  // the critical it is named for. Merely calling `jwt.verify(token, secret)`
-  // without pinning `algorithms` is not: jsonwebtoken has rejected `none` on a
-  // keyed verify since v9, so what is left is defence against algorithm
-  // confusion — worth doing, not worth blocking a deploy over.
-  VG105: (match) =>
-    /algorithms\s*:\s*\[\s*['"]none['"]/i.test(match)
-      ? null
-      : {
-          severity: 'medium',
-          note:
-            ' (Reported at medium: no `algorithms` option is pinned, but nothing here accepts ' +
-            '`alg: none` — a keyed `jwt.verify` rejects it. Pinning the algorithm is defence ' +
-            'against algorithm confusion, which matters most when the key could be a public key.)',
-        },
-};
 
 /**
  * The counts the README quotes about this ruleset, exported so the docs can be
