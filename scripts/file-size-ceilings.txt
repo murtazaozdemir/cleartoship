@@ -21,14 +21,26 @@
 #   elapsed milliseconds. Instrumentation for a class belongs on that
 #   class; the 5 lines cannot be moved anywhere that makes sense.
 #
+# A SPLIT adds a row, which is the one case where the list grows. Rule 26
+# step 7 asks for the split and step 6 fails on any new file over 500, so a
+# giant cut in two usually trips its own guard -- the gate's error message
+# names the remedy: list it in the same commit and say why in TODO.md.
+#   community.ts 2973 -> 1623 and linear-regex.ts 1383 (2026-11-13), the
+#   linear-time matcher moved out whole. 2973 -> 3006 across the two files,
+#   +33 lines (1.1%) of header and import, which is the cost of the seam.
+#   Each half keeps its own ceiling so each can only shrink; the sum is NOT
+#   the thing guarded, because a sum lets one half grow while the other
+#   shrinks and still reports green.
+#
 # Measured 2026-11-12. Each of these is one responsibility -- one scanner per
 # file, one report renderer, one file-walk helper, one gitignore matcher -- so
 # none is a Rule 26 step 1 violation; see TODO.md for why they are not being
 # split, and for the planned exception (the regex engine inside community.ts,
 # which is a genuine second section and is tracked as a step 7 refactor).
-2973 src/scanners/community.ts
 2238 src/scanners/server-actions.ts
+1623 src/scanners/community.ts
 1424 test/scan.test.js
+1383 src/scanners/linear-regex.ts
 1243 src/scanners/rls.ts
 1074 src/scanners/dependencies.ts
 1048 src/scanners/auth-helpers.ts

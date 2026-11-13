@@ -1125,6 +1125,40 @@ exactly why `DROP POLICY` was modelled and `DROP FUNCTION` never was. The gate e
 shrink notice and the ceiling was tightened to 1,243, so for once today the ratchet moved the right
 way.
 
+
+**2026-11-13 — the linear-time matcher moved out of `community.ts`.** Rule 26 step 7, the planned
+refactor that had been sitting in `## Open` since the file passed 3,000 lines. `community.ts` went
+**2,973 → 1,623** and the new `src/scanners/linear-regex.ts` is 1,383. The seam turned out to be
+clean enough to cut in one pass: the engine occupied one contiguous block and shared exactly
+**three names** with the rest of the file — `LinearMatcher`, `linearInIrregexp`, `matcherFor` —
+re-exported from `community.ts` because the ReDoS and override tests import them from there. Zero
+TypeScript errors on the first cut, which is the measurement that says the boundary was real and
+not something imposed: the scanner decides *what to look for*, the engine decides *how to look*,
+and nothing else crossed between them.
+
+**Verified as a refactor, not as a change.** A test suite passing proves the tests still pass; it
+does not prove the output is the same. So both builds scanned the same 541-file app and their
+findings were hashed: **162 findings, SHA-256 `307d8591…` identical on both sides.** That is the
+assertion a pure move deserves, and it is cheap — a sorted `id|severity|file|line|title` list
+through `sha256`.
+
+**The split tripped its own guard, exactly as predicted.** The gate failed with *"linear-regex.ts
+is 1383 lines, over the 500-line limit, and is not on the allowlist"* — step 7 asks for the split,
+step 6 fails on any new file over 500, and a giant cut in two lands two files over the line. That
+tension was described to the rulebook session earlier the same day, with a prescription: each half
+gets its own entry at its measured size in the same commit, with the reason logged, and the **sum
+is not the thing guarded**, because a sum lets one half grow while the other shrinks and still
+reports green. The gate's own error message already said the same thing. Applying it here: the sum
+went 2,973 → 3,006, **+33 lines (1.1%)** of header and import, which is the price of the seam and
+sits inside the 0.2–6.7% range measured on two earlier splits.
+
+One limitation of the gate found while doing this, worth knowing rather than fixing: it reads the
+**git index**, so a brand-new file is invisible until it is staged. That is deliberate — it is what
+stops a gitignored local file failing the gate — but the side effect is that a local run on a fresh
+untracked file reports "all allowlisted" and the failure only appears after `git add`. It did not
+hide anything here, because the file was staged before the commit, and CI stages everything by
+definition. Worth remembering before trusting a green local gate on new code.
+
 ## Open
 
 - **New rule candidate: row-level authorization on a database that has no RLS.** Surfaced by the
@@ -1141,17 +1175,6 @@ way.
   the rule; `/Users/Shared/CLAUDE.md` forbids shaping this tool's rule set around this portfolio,
   and a check satisfied by a filename is a box to tick rather than a control.
 
-- **Extract the regex engine out of `community.ts` as a planned refactor.**
-  About 1,400 of its 2,973 lines are the pattern parser, the compiler and the
-  linear-time backtracking matcher, which exist to run *arbitrary* patterns
-  without super-linear blowup and know nothing about the GuardVibe ruleset they
-  sit beside. Rule 26 step 1's "distinct sections" trigger, and the extraction
-  is natural: the surface other code uses is `matcherFor`, `linearInIrregexp`
-  and `LinearMatcher`, already exercised by `test/redos-overrides.test.js`.
-  Rule 26 step 7 governs how: a planned pass, in batches, suite run after each,
-  old import paths kept working — not done in passing. Note `PATTERN_FIXES`,
-  `PATTERN_OVERRIDES` and `MATCH_GUARDS` stay on the ruleset side of the line;
-  they are calibration, not engine.
 
 - **The whole `critical` tier, walked: 233 findings, 2 real (0.9%).** Reported 2026-11-08 by the
   caller running the scanner over 42 projects, who decided every one with a written reason.
