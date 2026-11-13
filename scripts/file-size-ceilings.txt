@@ -31,6 +31,10 @@
 #   Each half keeps its own ceiling so each can only shrink; the sum is NOT
 #   the thing guarded, because a sum lets one half grow while the other
 #   shrinks and still reports green.
+#   community.ts 1623 -> 676 and community-guards.ts 978 (2026-11-13), the
+#   MATCH_GUARDS calibration layer and the source-reading helpers that exist
+#   only to serve it. Second split of the same file the same day; it began
+#   the day at 2973. 1623 -> 1654 across the two, +31 lines (1.9%).
 #
 # Measured 2026-11-12. Each of these is one responsibility -- one scanner per
 # file, one report renderer, one file-walk helper, one gitignore matcher -- so
@@ -38,15 +42,16 @@
 # split, and for the planned exception (the regex engine inside community.ts,
 # which is a genuine second section and is tracked as a step 7 refactor).
 2237 src/scanners/server-actions.ts
-1623 src/scanners/community.ts
 1424 test/scan.test.js
 1383 src/scanners/linear-regex.ts
 1243 src/scanners/rls.ts
 1074 src/scanners/dependencies.ts
 1048 src/scanners/auth-helpers.ts
+978 src/scanners/community-guards.ts
 939 src/scanners/agent-logic.ts
 815 src/scanners/secrets.ts
 757 src/utils/gitignore.ts
+676 src/scanners/community.ts
 615 src/utils/files.ts
 571 src/report.ts
 520 site/public/index.html

@@ -1203,6 +1203,29 @@ all 27. Three candidates remain: they are Server Actions (this fix), they are ro
 pattern does not match (an `(auth)` route group, `/api/v1/users` for registration), or `reasons` was
 non-empty and the finding was correct. Guessing between those is what this entry refuses to do.
 
+
+**2026-11-13 — `community.ts` again: the calibration guards came out too, 1,623 → 676.** Needed
+rather than tidy: the next three `critical`-tier fixes all add `MATCH_GUARDS` entries, and the file
+was sitting exactly on its ceiling, so the gate was about to refuse work that genuinely belonged in
+it. The seam was checked the same way as the engine's — every one of the sixteen source-reading
+helpers above `MATCH_GUARDS` (`statementAround`, `callArgs`, `enclosingBody`, `assignedExpression`,
+`resolvesToOrigin` and the rest) is used **only** inside that block, and `enclosingBody`'s `export`
+turned out to have no importer anywhere in `src/` or `test/`. Only `MATCH_GUARDS` itself crossed.
+
+So `src/scanners/community-guards.ts` is 978 lines and `community.ts` is 676 — **down from 2,973
+at the start of the day**, across two splits. Verified identical the same way: 162 findings on the
+same 541-file app, matching SHA-256 on both builds. The division that falls out is the one worth
+having — the scanner walks files and reports, `linear-regex.ts` matches, and `community-guards.ts`
+decides whether a match survives contact with its context.
+
+Its header now also records which instrument to reach for, because that is the thing a future
+session will get wrong: wording goes in `community-text.ts`, a broken pattern in
+`community-patterns.ts`, a rule that cannot apply is withheld in `community.ts`, and a guard is for
+a match a correct pattern still cannot judge without the surrounding code. **A guard that is really
+a pattern bug hides the bug and keeps the cost** — one more rule that looks active and does nothing.
+
+Sum 1,623 → 1,654, **+31 lines (1.9%)**, inside the range the three earlier splits measured.
+
 ## Open
 
 - **New rule candidate: row-level authorization on a database that has no RLS.** Surfaced by the
