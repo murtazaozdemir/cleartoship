@@ -2068,6 +2068,10 @@ export class LinearMatcher implements Matcher {
   private readonly prefilter: RegExp | null;
   private readonly required: RegExp | null;
 
+  /** Instructions executed, cumulative. Lets the ReDoS tests assert on work
+   * done instead of elapsed milliseconds; see `test/redos-overrides.test.js`. */
+  steps = 0;
+
   private text: string | null = null;
   private n = 0;
   private gen = 0;
@@ -2275,6 +2279,7 @@ export class LinearMatcher implements Matcher {
     let pos = pos0;
     for (;;) {
       let ok = true;
+      this.steps++;
       const ins = prog[pc]!;
       if (sp + 10 > stack.length) stack = this.grow(sp);
       switch (ins.op) {

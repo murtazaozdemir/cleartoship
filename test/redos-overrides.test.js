@@ -270,15 +270,17 @@ test('the audit-named rules: same verdict as V8 on a real positive and negative'
   }
 });
 
-/** Milliseconds to run `m` over `text` to the end, the best of three. */
-function cost(m, text) {
-  let best = Infinity;
-  for (let k = 0; k < 3; k++) {
-    const t = performance.now();
-    matches(m, text);
-    best = Math.min(best, performance.now() - t);
-  }
-  return best;
+/**
+ * Milliseconds to run `m` over `text` to the end.
+ *
+ * One timing, not the best of three: its only remaining use is a 1-second
+ * ceiling on work that takes single-digit milliseconds, and the growth
+ * property it used to serve is asserted on step counts now.
+ */
+function millis(m, text) {
+  const t = performance.now();
+  matches(m, text);
+  return performance.now() - t;
 }
 
 /** Inputs of the shapes that stalled V8: a trigger repeated, or a trigger and then one long run. */
@@ -295,21 +297,75 @@ function adversarial(source, size) {
   ].map((s) => s.slice(0, size));
 }
 
+/** Instructions the matcher executed while running `m` over `text`. */
+function work(m, text) {
+  const before = m.steps;
+  matches(m, text);
+  return m.steps - before;
+}
+
+// Why this asserts on step counts and not on milliseconds.
+//
+// It used to read `b < 8 * a + 20` with a and b in milliseconds, and it flaked
+// in 2 runs out of 5 **against unchanged code**: where the prefilter rejects
+// early, `a` is a fraction of a millisecond, the bound collapses to about 20 ms,
+// and one GC pause clears it. That is measuring the machine, not the matcher,
+// and a test that goes red for no reason is worse than no test -- it teaches you
+// to re-run instead of to look.
+//
+// `LinearMatcher.steps` counts executed instructions, so it is exact and
+// identical on every machine. Measured here 2026-11-13, with `REDOS_REPORT=1`:
+// the worst growth across all 35 measurable pairs is **4.001x** for a 4x input,
+// i.e. linear to three digits, where quadratic would be 16x. So the bound below
+// is 4.1x rather than 8x -- a far tighter assertion than the timing one it
+// replaces, and one that cannot flake.
+//
+// The honest limit: 25 of the 60 (rule, shape) pairs execute **zero**
+// instructions, because the prefilter or required-substring test rejects the
+// input before the program runs at all, and for one rule (VG1070) that is true
+// of every shape. Step counts say nothing about those, so the absolute
+// wall-clock ceiling is kept as the only thing covering prefilter cost -- a 1 s
+// bound on work that takes single-digit milliseconds, which is why it was never
+// the part that flaked.
+//
+// MEASURABLE_PAIRS is asserted for the same reason: if a future change let the
+// prefilter swallow everything, every step assertion would pass vacuously and
+// this test would report green while checking nothing. `REDOS_REPORT=1` prints
+// the coverage so the number can be re-derived rather than guessed -- which
+// matters, because the first draft of this test took 16 from a standalone
+// re-implementation of `fragments()` and was wrong by more than 2x.
+const MEASURABLE_PAIRS = 35;
+
 test('ReDoS: the audit-named rules grow linearly, not with the square of the input', () => {
-  // V8 on the first of these took from 2 s (VG061 at 400 KB) to minutes. A
-  // quadratic cost quadruples per doubling, so 32 KB -> 128 KB would be 16x;
-  // linear is 4x. 8x leaves room for timer noise and GC without letting a
-  // quadratic one through.
+  let measurable = 0;
+  let worst = 0;
+  const silent = [];
   for (const id of Object.keys(SNIPPETS)) {
     const m = matcherFor(effective(id));
+    let anyForThisRule = 0;
     const larges = adversarial(effective(id).source, 128_000);
     for (const [small, large] of adversarial(effective(id).source, 32_000).map((s, i) => [s, larges[i]])) {
-      const a = cost(m, small);
-      const b = cost(m, large);
-      assert.ok(b < 8 * a + 20, `${id}: ${a.toFixed(1)} ms at 32 KB, ${b.toFixed(1)} ms at 128 KB`);
-      assert.ok(b < 1_000, `${id}: ${b.toFixed(1)} ms at 128 KB`);
+      const a = work(m, small);
+      const b = work(m, large);
+      if (a > 0) {
+        measurable++;
+        anyForThisRule++;
+        worst = Math.max(worst, b / a);
+        // 4x is linear for a 4x input; +16 absorbs fixed per-search setup.
+        assert.ok(b <= 4.1 * a + 16, `${id}: ${a} steps at 32 KB, ${b} at 128 KB (${(b / a).toFixed(2)}x)`);
+      }
+      // Covers the prefilter, which executes no instructions to count.
+      assert.ok(millis(m, large) < 1_000, `${id}: slow at 128 KB`);
     }
+    if (anyForThisRule === 0) silent.push(id);
   }
+  if (process.env.REDOS_REPORT) console.error(`measurable=${measurable}/60 worst=${worst.toFixed(3)}x prefilter-only-rules=${silent.length} [${silent.join(' ')}]`);
+  assert.equal(
+    measurable,
+    MEASURABLE_PAIRS,
+    `${measurable} of 60 pairs exercised the matcher, expected ${MEASURABLE_PAIRS} -- ` +
+      'if this dropped, the step assertions above are passing vacuously',
+  );
 });
 
 test('ReDoS: every rule stays fast on its own trigger words at 32 KB', () => {

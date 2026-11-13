@@ -677,7 +677,7 @@ are split by responsibility and the line count is only the smoke alarm, and nine
 of the ten are one responsibility each (one scanner per file, one report
 renderer, one file walk, one gitignore matcher) with none of step 1's triggers
 firing. The row was **split**, because the tenth is real on step 1's own terms:
-`community.ts` is 2,968 lines holding two unrelated jobs, and about 1,400 of
+`community.ts` is 2,973 lines holding two unrelated jobs, and about 1,400 of
 them are a general-purpose regex engine — pattern parser, compiler, and a
 backtracking matcher that memoises failed `(state, position)` pairs — which
 knows nothing about security rules and has its own narrow surface
@@ -966,21 +966,62 @@ real-world instance moved `medium`/"Request body" → `low`/"Upstream response b
 `CTS070` in that app changed. Suite 243 → 249, the same 9 sandbox `.env` `EPERM` failures as
 before; `logic.ts` 334 → 447, still unlisted and under the 500 ceiling.
 
+
+**2026-11-13 — the ReDoS growth test was measuring the machine, not the matcher.**
+`test/redos-overrides.test.js` asserted `b < 8 * a + 20` with `a` and `b` in milliseconds, and it
+flaked in 2 runs out of 5 **against unchanged code** — proved by stashing the working tree and
+watching it fail anyway. The mechanism: where the prefilter rejects early, `a` is a fraction of a
+millisecond, so the bound collapses to roughly 20 ms and a single GC pause clears it. That is
+worse than having no test, because a red run with no cause teaches you to re-run rather than to
+look — the same lesson as a green push that is not a deploy, pointed the other way.
+
+`LinearMatcher` now carries a `steps` counter, incremented once per executed instruction, so the
+growth property is asserted on **work done** instead of elapsed time. Measured with
+`REDOS_REPORT=1`: the worst growth across all 35 measurable (rule, shape) pairs is **4.001x for a
+4x input** — linear to three digits, where quadratic would be 16x. So the bound is now `4.1 * a +
+16`, which is both deterministic and far tighter than the 8x it replaces. Five consecutive runs,
+no variation.
+
+Two things this surfaced that are worth more than the fix. First, **25 of the 60 pairs execute
+zero instructions**, because the prefilter or required-substring test rejects the input before the
+program runs at all, and for `VG1070` that is true of every shape — so step counts say nothing
+about prefilter cost, and the absolute 1-second wall-clock ceiling is kept as the only thing
+covering it. It is a 1 s bound on single-digit-millisecond work, which is why it was never the
+part that flaked. Second, the test now asserts the **measurable-pair count** itself: if a future
+change let the prefilter swallow everything, all 35 step assertions would pass vacuously and the
+test would report green while checking nothing. A vacuous assertion and a skipped test are the
+same failure.
+
+That last guard caught its own author immediately. The first draft set it to 16, measured with a
+standalone re-implementation of the test's `fragments()` helper — which generates different
+adversarial inputs, so the number was wrong by more than 2x and the test failed on its first run
+with `35 of 60 pairs exercised the matcher, expected 16`. **Measure with the real harness, not a
+replica of it.** `cost()` also went from best-of-three to a single timing, since its only
+remaining job is a 1-second ceiling; that is roughly a third off the test's runtime.
+
+**What the counter costs, and why the measurement does not deserve more confidence than this.**
+It is one integer increment per executed instruction, in the hottest loop in the codebase, so it
+was worth measuring rather than waving through. A/B on a 541-file app, three scans each:
+`39.07 / 30.56 / 27.11 s` without it against `26.34 / 26.56 / 25.77 s` with it. The instrumented
+build is *not* 1.3 s faster — nothing about adding an increment can speed a scan up. The
+uninstrumented arm ran **first in both passes** and absorbed the cold-cache cost, which is visible
+as the 39 → 30.6 → 27.1 slide inside that arm on its own. So the experiment was biased in the
+change's favour and can only support an **upper bound**: no visible regression, the arms differing
+by less than the run-order swing within one arm. That is the same cold-first-run artifact this file
+records two entries above, in the correction sent to the auditor about a 6.2x portfolio speedup —
+it showed up here in my own favour, which is the reason to discount it rather than bank it. A point
+estimate would need alternating order with the first run of each arm discarded; it was not worth
+another three minutes for an effect this far under the noise.
+
+One ceiling moved up: `community.ts` 2,968 → 2,973, for the counter. Instrumentation for a class
+belongs on that class, and the five lines cannot be moved anywhere that makes sense — the fourth
+time this gate has caught its own author, and the second time the right answer was to raise the
+number and say why rather than to move code.
+
 ## Open
 
-- **`test/redos-overrides.test.js` has a timing-based assertion that flakes.** "ReDoS: the
-  audit-named rules grow linearly, not with the square of the input" compares wall-clock at
-  32 KB against 128 KB, and the 32 KB measurement rounds to `0.0 ms`, so the ratio is
-  meaningless — `VG102: 0.0 ms at 32 KB, 24.0 ms at 128 KB`. Observed in 2 of 5 runs, in both
-  changed and unchanged code (confirmed by stashing), so it is not a regression. The point of
-  that test is real and worth keeping: the mechanism it guards is the linear matcher. But it
-  should assert on **work done** — matcher steps, or `(state, position)` pairs memoised — rather
-  than on elapsed milliseconds, or at minimum floor the small measurement so a zero cannot
-  produce an infinite ratio. A flaky assertion in an otherwise deterministic suite trains people
-  to re-run on red, which is how a real failure gets waved through.
-
 - **Extract the regex engine out of `community.ts` as a planned refactor.**
-  About 1,400 of its 2,968 lines are the pattern parser, the compiler and the
+  About 1,400 of its 2,973 lines are the pattern parser, the compiler and the
   linear-time backtracking matcher, which exist to run *arbitrary* patterns
   without super-linear blowup and know nothing about the GuardVibe ruleset they
   sit beside. Rule 26 step 1's "distinct sections" trigger, and the extraction
