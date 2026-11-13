@@ -872,6 +872,45 @@ changed, confirmed by stashing. A timing assertion in a suite that is otherwise 
 teaches people to re-run on red, which is how a real failure gets waved through. It belongs in
 `## Open` and is there now.
 
+**2026-11-12 — the scanner was reading 7,454 files out of a virtualenv, and 98.6% of one app's
+findings came from it.** Came out of a performance report: a 42-app portfolio sweep had gone
+from a documented ~2m20s to **829s**, with one app accounting for 358s. The caller flagged it
+without attributing it, which was right — and it turned out to be this scanner's.
+
+`SKIP_DIRS` in `src/utils/files.ts` names `.venv` and `venv`, matched by exact name. That app
+had a `.venv-convert/` beside its ordinary `.venv/`. `.py` is in `SCAN_EXTS`, so every file in
+it was opened and run through the Python community rules. Measured directly on that app, before
+and after, rather than reasoned about:
+
+| | wall | findings | inside the virtualenv |
+|---|---|---|---|
+| before | 86s | 645 | **636** |
+| after | 5s | 9 | 0 |
+
+**17x faster, and 636 findings that were all in code nobody there wrote.** The caller
+independently remembered "636 findings out of a `.venv-convert/` tree" from an earlier run,
+which is the same number from the other side.
+
+The fix is a `pyvenv.cfg` test on each directory before descending, because PEP 405 requires
+that file: a directory is a virtualenv exactly when it has one. That matters for the bar
+`SKIP_DIRS` has to meet — everything on it must be regenerable in *any* repository, not just
+one of ours, because `site` and `_reference` were once on that list and every user with a
+`site/` directory had the whole subtree reported clean without a file being opened. A name test
+cannot do this job: `env/` is too ambiguous to skip blind, and that is the same conclusion this
+folder's own `CLAUDE.md` records for the auditor's classifier, reached there first.
+
+`test/virtualenv-skip.test.js`, 3 tests, **2 of which fail against the pre-fix build**. The
+third is the guard that must pass both ways: `env/` and `environment/` with no `pyvenv.cfg` are
+somebody's source and are still read. The skip is also asserted to be *named* in
+`skippedDirs`, because "no findings" must never be indistinguishable from "nothing was read".
+
+One ceiling moved **up** for this: `files.ts` 591 → 615. A `pyvenv.cfg` test belongs in the file
+whose job is file collection, and Rule 26 step 1 is explicit that files are split by
+responsibility rather than by line count — a new file for one 6-line predicate would be the
+worse mistake. `scripts/file-size-ceilings.txt` now carries a short log of upward moves and
+their reasons, since that is the one direction the gate exists to resist. In the same day
+`community.ts` went 3,049 → 2,968 by moving calibration out, so the ratchet is net tighter.
+
 ## Open
 
 - **`test/redos-overrides.test.js` has a timing-based assertion that flakes.** "ReDoS: the

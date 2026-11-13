@@ -10,6 +10,13 @@
 # says so and asks you to tighten the number here (or `--update` does it).
 # Drop the row entirely once a file is back under 500.
 #
+# A ceiling moving UP needs a reason in the commit that moves it. So far:
+#   files.ts 591 -> 615 (2026-11-12) — `isVirtualenv`, a `pyvenv.cfg` test in
+#   the directory walk. It belongs in the file whose job is file collection,
+#   and Rule 26 step 1 says split by responsibility, not by line count; a new
+#   file for one 6-line predicate would be the worse mistake.
+#   community.ts 3049 -> 2968 the same day, by moving calibration out.
+#
 # Measured 2026-11-12. Each of these is one responsibility -- one scanner per
 # file, one report renderer, one file-walk helper, one gitignore matcher -- so
 # none is a Rule 26 step 1 violation; see TODO.md for why they are not being
@@ -24,7 +31,7 @@
 939 src/scanners/agent-logic.ts
 815 src/scanners/secrets.ts
 757 src/utils/gitignore.ts
-591 src/utils/files.ts
+615 src/utils/files.ts
 571 src/report.ts
 520 site/public/index.html
 509 test/audit-core.test.js

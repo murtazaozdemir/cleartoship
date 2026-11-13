@@ -25,6 +25,30 @@ const SKIP_DIRS = new Set([
   '.cts-cache',
 ]);
 
+/**
+ * A Python virtualenv, identified by the marker PEP 405 requires rather than by
+ * its directory name.
+ *
+ * `SKIP_DIRS` names `.venv` and `venv`, and that is all a name test can safely
+ * do: `env/` is too ambiguous to skip blind, and a virtualenv can be called
+ * anything. Measured on one app in a portfolio sweep, which had a
+ * `.venv-convert/` beside its ordinary `.venv/`: 86s and 645 findings before
+ * this, of which **636 were inside that directory** — `.py` is in `SCAN_EXTS`,
+ * so all 7,454 of its files were opened; 5s and 9 findings after.
+ *
+ * `pyvenv.cfg` keeps it a general rule rather than a project-specific name,
+ * which is the bar `SKIP_DIRS` has to meet — `site` and `_reference` were once
+ * on that list, and every user with a `site/` directory had the whole subtree
+ * reported clean without a file being opened.
+ */
+function isVirtualenv(dir: string): boolean {
+  try {
+    return statSync(join(dir, 'pyvenv.cfg')).isFile();
+  } catch {
+    return false;
+  }
+}
+
 const SCAN_EXTS = new Set([
   '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.cts', '.sql',
   '.json', '.txt', '.toml', '.env', '.yaml', '.yml',
@@ -358,7 +382,7 @@ export function walk(
       }
 
       if (st.isDirectory()) {
-        if (SKIP_DIRS.has(entry)) {
+        if (SKIP_DIRS.has(entry) || isVirtualenv(full)) {
           skippedDirs.add(entry);
           continue;
         }
